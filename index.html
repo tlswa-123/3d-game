@@ -1,0 +1,1502 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>三渲二 · 纪念碑谷世界</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #e8e0d4;
+      overflow: hidden;
+      height: 100vh;
+      font-family: 'Helvetica Neue', sans-serif;
+    }
+    canvas { display: block; }
+    .title {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #8a7e72;
+      font-size: 12px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      opacity: 0.5;
+      user-select: none;
+    }
+    .hint {
+      position: fixed;
+      top: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #8a7e72;
+      font-size: 12px;
+      letter-spacing: 1px;
+      opacity: 0.7;
+      user-select: none;
+      background: rgba(138,126,114,0.1);
+      padding: 8px 20px;
+      border-radius: 20px;
+    }
+    .hint kbd {
+      display: inline-block;
+      background: rgba(138,126,114,0.18);
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-family: inherit;
+      font-size: 12px;
+      margin: 0 2px;
+    }
+    /* 小地图 */
+    .minimap {
+      position: fixed;
+      bottom: 60px;
+      right: 20px;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      overflow: hidden;
+      border: 2px solid rgba(138,126,114,0.4);
+      background: rgba(184,196,160,0.5);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    .minimap canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    /* 位置信息 */
+    .coords {
+      position: fixed;
+      bottom: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #8a7e72;
+      font-size: 11px;
+      letter-spacing: 1px;
+      opacity: 0;
+      transition: opacity 0.8s ease;
+      user-select: none;
+    }
+    .coords.show { opacity: 0.6; }
+    /* 加载屏幕 */
+    .loading {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #e8e0d4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      transition: opacity 1.5s ease;
+    }
+    .loading.fade { opacity: 0; pointer-events: none; }
+    .loading h1 {
+      font-size: 24px;
+      color: #8a7e72;
+      letter-spacing: 6px;
+      margin-bottom: 20px;
+      font-weight: 300;
+    }
+    .loading-bar {
+      width: 180px;
+      height: 3px;
+      background: rgba(138,126,114,0.2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .loading-bar-inner {
+      width: 0%;
+      height: 100%;
+      background: #c49070;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .loading p {
+      margin-top: 15px;
+      color: #b0a898;
+      font-size: 11px;
+      letter-spacing: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="loading" id="loadScreen">
+    <h1>纪念碑谷</h1>
+    <div class="loading-bar"><div class="loading-bar-inner" id="loadBar"></div></div>
+    <p>MONUMENT VALLEY WORLD</p>
+  </div>
+  <div class="hint" id="hintBar"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 · 鼠标拖拽旋转镜头 · 滚轮调距离</div>
+  <div class="coords" id="coords"></div>
+  <div class="minimap" id="minimap"><canvas id="minimapCanvas" width="120" height="120"></canvas></div>
+  <div class="title">Monument Valley World</div>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/loaders/RGBELoader.js"></script>
+  <script>
+  (function() {
+    // ════════════════════════════════════════════════════
+    // SCENE
+    // ════════════════════════════════════════════════════
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe8e0d4);  // 先用纯色，HDR 加载后替换
+    scene.fog = new THREE.Fog(0xd4c8b8, 35, 80);   // 日落暖色雾
+
+    var camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 200);
+
+    var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.8;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    document.body.appendChild(renderer.domElement);
+
+    // ── 加载 HDR 天空贴图 ──
+    var pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
+    new THREE.RGBELoader()
+      .setDataType(THREE.HalfFloatType)
+      .load('grasslands_sunset_4k.hdr', function(hdrTexture) {
+        var envMap = pmremGenerator.fromEquirectangular(hdrTexture).texture;
+        scene.background = hdrTexture;
+        hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
+        // 不设 scene.environment，避免影响卡通风格模型的材质
+        pmremGenerator.dispose();
+        console.log('HDR 天空贴图加载完成');
+      });
+
+    // ── 第三人称跟随相机参数 ──
+    var camDistance = 6;       // 摄像机到人物的距离
+    var camHeight = 3.5;      // 摄像机在人物上方的高度
+    var camSmoothness = 0.1;  // 跟随平滑度 (越大越紧密)
+    var camRotX = 0;          // 鼠标拖拽的水平旋转偏移
+    var camRotY = 0;          // 鼠标拖拽的垂直旋转偏移
+    var isDragging = false;
+    var lastMouseX = 0, lastMouseY = 0;
+    var camMinY = 0.5;        // 最低视角高度（相对人物）
+    var camMaxY = 8;          // 最高视角高度
+
+    // 鼠标拖拽控制视角
+    renderer.domElement.addEventListener('mousedown', function(e) {
+      isDragging = true;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+    });
+    window.addEventListener('mousemove', function(e) {
+      if (!isDragging) return;
+      var dx = e.clientX - lastMouseX;
+      var dy = e.clientY - lastMouseY;
+      camRotX -= dx * 0.005;
+      camRotY += dy * 0.005;
+      // 限制垂直角度
+      camRotY = Math.max(-0.5, Math.min(1.0, camRotY));
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+    });
+    window.addEventListener('mouseup', function() { isDragging = false; });
+
+    // 滚轮缩放距离
+    renderer.domElement.addEventListener('wheel', function(e) {
+      camDistance += e.deltaY * 0.005;
+      camDistance = Math.max(3, Math.min(14, camDistance));
+    });
+
+    // 触摸支持
+    renderer.domElement.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 1) {
+        isDragging = true;
+        lastMouseX = e.touches[0].clientX;
+        lastMouseY = e.touches[0].clientY;
+      }
+    });
+    renderer.domElement.addEventListener('touchmove', function(e) {
+      if (!isDragging || e.touches.length !== 1) return;
+      var dx = e.touches[0].clientX - lastMouseX;
+      var dy = e.touches[0].clientY - lastMouseY;
+      camRotX -= dx * 0.005;
+      camRotY += dy * 0.005;
+      camRotY = Math.max(-0.5, Math.min(1.0, camRotY));
+      lastMouseX = e.touches[0].clientX;
+      lastMouseY = e.touches[0].clientY;
+    });
+    renderer.domElement.addEventListener('touchend', function() { isDragging = false; });
+
+    // ════════════════════════════════════════════════════
+    // SHADERS
+    // ════════════════════════════════════════════════════
+    var toonVert = [
+      'varying vec3 vNormal;',
+      'void main() {',
+      '  vNormal = normalize(normalMatrix * normal);',
+      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+      '}'
+    ].join('\n');
+
+    var toonFrag = [
+      'uniform vec3 uColor;',
+      'uniform vec3 uLightDir;',
+      'varying vec3 vNormal;',
+      'void main() {',
+      '  float d = dot(normalize(vNormal), normalize(uLightDir));',
+      '  float s;',
+      '  if (d > 0.5) { s = 1.0; }',
+      '  else if (d > -0.1) { s = 0.78; }',
+      '  else { s = 0.58; }',
+      '  gl_FragColor = vec4(uColor * s, 1.0);',
+      '}'
+    ].join('\n');
+
+    var lightDir = new THREE.Vector3(1.2, 2.0, 1.5).normalize();
+
+    function toonMat(hex) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uColor: { value: new THREE.Color(hex) },
+          uLightDir: { value: lightDir }
+        },
+        vertexShader: toonVert,
+        fragmentShader: toonFrag
+      });
+    }
+
+    var outVert = [
+      'uniform float uThick;',
+      'void main() {',
+      '  vec3 p = position + normal * uThick;',
+      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);',
+      '}'
+    ].join('\n');
+
+    var outFrag = [
+      'void main() {',
+      '  gl_FragColor = vec4(0.11, 0.09, 0.07, 1.0);',
+      '}'
+    ].join('\n');
+
+    function outMat(t) {
+      return new THREE.ShaderMaterial({
+        uniforms: { uThick: { value: t || 0.03 } },
+        vertexShader: outVert,
+        fragmentShader: outFrag,
+        side: THREE.BackSide
+      });
+    }
+
+    var waterVert = [
+      'varying vec3 vNormal;',
+      'varying vec2 vUv;',
+      'void main() {',
+      '  vNormal = normalize(normalMatrix * normal);',
+      '  vUv = uv;',
+      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+      '}'
+    ].join('\n');
+
+    var waterFrag = [
+      'uniform vec3 uColor;',
+      'uniform vec3 uLightDir;',
+      'uniform float uTime;',
+      'varying vec3 vNormal;',
+      'varying vec2 vUv;',
+      'void main() {',
+      '  float d = dot(normalize(vNormal), normalize(uLightDir));',
+      '  float s;',
+      '  if (d > 0.4) { s = 1.0; }',
+      '  else if (d > -0.2) { s = 0.82; }',
+      '  else { s = 0.6; }',
+      '  float wave = sin(vUv.x * 20.0 + uTime * 2.5) * 0.5 + 0.5;',
+      '  float sparkle = smoothstep(0.75, 0.95, wave) * 0.15;',
+      '  vec3 color = uColor * s + vec3(sparkle);',
+      '  gl_FragColor = vec4(color, 0.85);',
+      '}'
+    ].join('\n');
+
+    function waterMaterial(hex) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uColor: { value: new THREE.Color(hex) },
+          uLightDir: { value: lightDir },
+          uTime: { value: 0 }
+        },
+        vertexShader: waterVert,
+        fragmentShader: waterFrag,
+        transparent: true
+      });
+    }
+
+    function addMesh(geo, color, parent, pos, rot, scl, ol) {
+      var m = new THREE.Mesh(geo, toonMat(color));
+      if (pos) m.position.set(pos[0], pos[1], pos[2]);
+      if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
+      if (scl) m.scale.set(scl[0], scl[1], scl[2]);
+      parent.add(m);
+      var o = new THREE.Mesh(geo, outMat(ol || 0.03));
+      if (pos) o.position.set(pos[0], pos[1], pos[2]);
+      if (rot) o.rotation.set(rot[0], rot[1], rot[2]);
+      if (scl) o.scale.set(scl[0], scl[1], scl[2]);
+      parent.add(o);
+      return m;
+    }
+
+    // ════════════════════════════════════════════════════
+    // SEEDED RANDOM
+    // ════════════════════════════════════════════════════
+    function seededRandom(seed) {
+      var s = seed;
+      return function() {
+        s = (s * 9301 + 49297) % 233280;
+        return s / 233280;
+      };
+    }
+    var rand = seededRandom(42);
+
+    // ════════════════════════════════════════════════════
+    // TERRAIN
+    // ════════════════════════════════════════════════════
+    var TERRAIN_SIZE = 48;
+    var TERRAIN_SEG = 160;
+    var terrainGeo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEG, TERRAIN_SEG);
+    terrainGeo.rotateX(-Math.PI / 2);
+
+    function terrainHeight(x, z) {
+      var h = Math.sin(x * 0.25 + 0.5) * Math.cos(z * 0.2 - 0.3) * 1.8;
+      h += Math.sin(x * 0.5 + z * 0.3) * 0.7;
+      h += Math.cos(x * 0.35 - z * 0.5 + 1.0) * 0.5;
+      h += Math.sin(x * 1.2 + z * 0.8) * 0.15;
+      var riverZ = Math.sin(x * 0.3) * 2.0 + Math.sin(x * 0.7) * 0.8;
+      var distToRiver = Math.abs(z - riverZ);
+      var riverDepth = Math.max(0, 1.0 - distToRiver * 0.8) * 1.2;
+      h -= riverDepth;
+      h += 0.5;
+      return h;
+    }
+
+    function riverCenterZ(x) {
+      return Math.sin(x * 0.3) * 2.0 + Math.sin(x * 0.7) * 0.8;
+    }
+
+    function isInRiver(x, z) {
+      return Math.abs(z - riverCenterZ(x)) < 1.0;
+    }
+
+    var tPos = terrainGeo.attributes.position;
+    for (var i = 0; i < tPos.count; i++) {
+      var x = tPos.getX(i);
+      var z = tPos.getZ(i);
+      tPos.setY(i, terrainHeight(x, z));
+    }
+    terrainGeo.computeVertexNormals();
+
+    scene.add(new THREE.Mesh(terrainGeo, toonMat(0xb8c4a0)));
+    scene.add(new THREE.Mesh(terrainGeo, outMat(0.04)));
+
+    var baseGeo = new THREE.BoxGeometry(TERRAIN_SIZE + 2, 4, TERRAIN_SIZE + 2);
+    addMesh(baseGeo, 0xa09880, scene, [0, -2.5, 0], null, null, 0.05);
+
+    // ════════════════════════════════════════════════════
+    // RIVER
+    // ════════════════════════════════════════════════════
+    var RIVER_HALF = TERRAIN_SIZE / 2;
+    var waterVertices = [], waterIndices = [], waterUvs = [];
+    var waterSegs = 60;
+    for (var wi = 0; wi <= waterSegs; wi++) {
+      var wx = -RIVER_HALF + (TERRAIN_SIZE * wi / waterSegs);
+      var wz0 = riverCenterZ(wx) - 0.55;
+      var wz1 = riverCenterZ(wx) + 0.55;
+      var wy = terrainHeight(wx, riverCenterZ(wx)) + 0.08;
+      waterVertices.push(wx, wy, wz0, wx, wy, wz1);
+      waterUvs.push(wi / waterSegs, 0, wi / waterSegs, 1);
+      if (wi < waterSegs) {
+        var b = wi * 2;
+        waterIndices.push(b, b+1, b+2, b+1, b+3, b+2);
+      }
+    }
+    var waterGeo = new THREE.BufferGeometry();
+    waterGeo.setAttribute('position', new THREE.Float32BufferAttribute(waterVertices, 3));
+    waterGeo.setAttribute('uv', new THREE.Float32BufferAttribute(waterUvs, 2));
+    waterGeo.setIndex(waterIndices);
+    waterGeo.computeVertexNormals();
+
+    var wMat = waterMaterial(0x7ab0c4);
+    scene.add(new THREE.Mesh(waterGeo, wMat));
+    scene.add(new THREE.Mesh(waterGeo, (function() {
+      var m = outMat(0.035); m.transparent = true; return m;
+    })()));
+
+    // ════════════════════════════════════════════════════
+    // TREE
+    // ════════════════════════════════════════════════════
+    var trees = [];
+    function createTree(x, z) {
+      var g = new THREE.Group();
+      var trunkH = 0.7 + rand() * 0.5;
+      var crownR = 0.4 + rand() * 0.3;
+
+      addMesh(new THREE.CylinderGeometry(0.07, 0.1, trunkH, 8),
+        0xb89a7a, g, [0, trunkH/2, 0], null, null, 0.02);
+
+      var layers = 2 + Math.floor(rand() * 2);
+      for (var i = 0; i < layers; i++) {
+        var r = crownR * (1 - i*0.25);
+        var h = (0.7 + rand()*0.4) * (1 - i*0.12);
+        var y = trunkH + i * (h*0.4);
+        addMesh(new THREE.ConeGeometry(r, h, 6),
+          0x7ab07a, g, [0, y + h*0.35, 0], null, null, 0.025);
+      }
+
+      g.position.set(x, terrainHeight(x, z), z);
+      g.rotation.y = rand() * Math.PI * 2;
+      scene.add(g);
+      trees.push(g);
+    }
+
+    // ════════════════════════════════════════════════════
+    // FLOWER
+    // ════════════════════════════════════════════════════
+    var flowers = [];
+    var fCols = [0xd4a0a0, 0xa0b8d4, 0xd4c0a0, 0xc4a0c4, 0xd4b0b0, 0xa8c8a8];
+    function createFlower(x, z) {
+      var g = new THREE.Group();
+      var stemH = 0.3 + rand()*0.3;
+      var pc = fCols[Math.floor(rand()*fCols.length)];
+
+      addMesh(new THREE.CylinderGeometry(0.015, 0.02, stemH, 6),
+        0x6a9a6a, g, [0, stemH/2, 0], null, null, 0.012);
+      addMesh(new THREE.SphereGeometry(0.04, 8, 8),
+        0x7ab07a, g, [0.05, stemH*0.35, 0], null, [1.5,1,0.6], 0.01);
+      addMesh(new THREE.SphereGeometry(0.045, 8, 8),
+        0xe8c86a, g, [0, stemH+0.04, 0], null, [1,0.7,1], 0.012);
+
+      var pg = new THREE.SphereGeometry(0.05, 6, 6);
+      for (var i = 0; i < 5; i++) {
+        var a = (i/5) * Math.PI * 2;
+        addMesh(pg, pc, g,
+          [Math.cos(a)*0.065, stemH+0.035, Math.sin(a)*0.065],
+          null, [1.1, 0.55, 1.1], 0.01);
+      }
+
+      g.position.set(x, terrainHeight(x, z), z);
+      g.rotation.y = rand() * Math.PI * 2;
+      scene.add(g);
+      flowers.push(g);
+    }
+
+    // ════════════════════════════════════════════════════
+    // GRASS
+    // ════════════════════════════════════════════════════
+    var grasses = [];
+    function createGrass(x, z) {
+      var g = new THREE.Group();
+      var count = 3 + Math.floor(rand()*5);
+      var spread = 0.15 + rand()*0.15;
+      for (var i = 0; i < count; i++) {
+        var h = 0.15 + rand()*0.2;
+        addMesh(new THREE.ConeGeometry(0.015, h, 4),
+          0x8aba6a, g,
+          [(rand()-0.5)*spread, h/2, (rand()-0.5)*spread],
+          [0, 0, (rand()-0.5)*0.3], null, 0.008);
+      }
+      g.position.set(x, terrainHeight(x, z), z);
+      scene.add(g);
+      grasses.push(g);
+    }
+
+    // ════════════════════════════════════════════════════
+    // STONE
+    // ════════════════════════════════════════════════════
+    var stones = [];
+    function createStone(x, z, size) {
+      var g = new THREE.Group();
+      size = size || 0.15 + rand()*0.25;
+      var sq = 0.5 + rand()*0.3;
+      var geo = new THREE.DodecahedronGeometry(size, 1);
+      var p = geo.attributes.position;
+      for (var i = 0; i < p.count; i++) {
+        var n = 0.85 + rand()*0.3;
+        p.setXYZ(i, p.getX(i)*n, p.getY(i)*sq*n, p.getZ(i)*n);
+      }
+      geo.computeVertexNormals();
+      addMesh(geo, 0xb0a898, g, [0, size*sq*0.45, 0], null, null, 0.02);
+
+      if (rand() > 0.4) {
+        var sg = new THREE.DodecahedronGeometry(size*0.3, 0);
+        var sp = sg.attributes.position;
+        for (var j = 0; j < sp.count; j++) sp.setY(j, sp.getY(j)*0.6);
+        sg.computeVertexNormals();
+        addMesh(sg, 0xa89888, g,
+          [size*0.7, size*0.1, size*0.3*(rand()>0.5?1:-1)], null, null, 0.012);
+      }
+
+      g.position.set(x, terrainHeight(x, z), z);
+      g.rotation.y = rand() * Math.PI * 2;
+      scene.add(g);
+      stones.push(g);
+    }
+
+    // ════════════════════════════════════════════════════
+    // CHARACTER — GLB 模型加载
+    // ════════════════════════════════════════════════════
+    var character = new THREE.Group();
+    var charX = 0, charZ = 2;
+    character.position.set(charX, terrainHeight(charX, charZ), charZ);
+    scene.add(character);
+
+    // GLB 动画相关
+    var mixer = null;        // THREE.AnimationMixer
+    var runAction = null;    // 跑步动画 Action
+    var glbModel = null;     // 加载的模型
+    var charModelReady = false;
+
+    // 加载 GLB
+    var gltfLoader = new THREE.GLTFLoader();
+    gltfLoader.load('无标题.glb', function(gltf) {
+      var model = gltf.scene;
+
+      // ★ 用整个场景作为 charRoot（不单独取 Armature）
+      // 这样所有子节点的相对变换都保持正确
+      var charRoot = model;
+
+      // ★ 修复材质颜色 — GLB 导出时丢失了 baseColorFactor
+      // 根据材质名字给它们分配合理的颜色
+      var materialColors = {
+        '汉堡包':     [0.82, 0.65, 0.40, 1],  // 面包棕色
+        '汉堡包.002': [0.82, 0.65, 0.40, 1],  // 面包棕色
+        '汉堡包.008': [0.82, 0.65, 0.40, 1],  // 面包棕色
+        '番茄.001':   [0.85, 0.22, 0.15, 1],  // 番茄红
+        '材质.004':   [0.83, 0.72, 0.55, 1],  // 皮肤色
+        'runes .003': [0.35, 0.25, 0.55, 1],  // 神秘紫（符文）
+      };
+      charRoot.traverse(function(child) {
+        if (child.isMesh && child.material) {
+          var mat = child.material;
+          var matName = mat.name || '';
+          // 如果材质没有 baseColor，给它设一个
+          if (materialColors[matName]) {
+            var c = materialColors[matName];
+            mat.color = new THREE.Color(c[0], c[1], c[2]);
+          } else if (!mat.color || (mat.color.r === 1 && mat.color.g === 1 && mat.color.b === 1)) {
+            // 没匹配到名字且是默认白色 → 给个肤色
+            mat.color = new THREE.Color(0.83, 0.72, 0.55);
+          }
+        }
+      });
+
+      // 计算整个模型的包围盒
+      var box = new THREE.Box3().setFromObject(charRoot);
+      var modelHeight = box.max.y - box.min.y;
+      // 游戏里角色大约 0.7 单位高
+      var targetHeight = 0.7;
+      var modelScale = targetHeight / modelHeight;
+
+      // ★ 关键：用包围盒中心来居中模型（修复 XZ 偏移）
+      var center = new THREE.Vector3();
+      box.getCenter(center);
+
+      // 创建一个容器来做偏移修正
+      var wrapper = new THREE.Group();
+      wrapper.add(charRoot);
+      // 先缩放
+      wrapper.scale.set(modelScale, modelScale, modelScale);
+      // 把模型中心移到原点：X/Z 居中，Y 底部对齐
+      charRoot.position.x = -center.x;
+      charRoot.position.y = -box.min.y;  // 底部对齐地面
+      charRoot.position.z = -center.z;
+
+      character.add(wrapper);
+      glbModel = wrapper;
+
+      // 设置动画 — mixer 绑定到原始 charRoot 上
+      mixer = new THREE.AnimationMixer(charRoot);
+
+      // 找到 Mixamo 跑步动画（channels 较多的那个）
+      var runClip = null;
+      for (var i = 0; i < gltf.animations.length; i++) {
+        var clip = gltf.animations[i];
+        if (clip.name.indexOf('mixamo') !== -1 || clip.tracks.length > 10) {
+          runClip = clip;
+          break;
+        }
+      }
+
+      if (runClip) {
+        // ★ 关键：移除 Hips 的 position/translation track（去除根位移）
+        var filteredTracks = [];
+        for (var ti = 0; ti < runClip.tracks.length; ti++) {
+          var track = runClip.tracks[ti];
+          if (track.name.indexOf('Hips') !== -1 && track.name.indexOf('position') !== -1) {
+            continue;
+          }
+          filteredTracks.push(track);
+        }
+        var cleanClip = new THREE.AnimationClip(runClip.name, runClip.duration, filteredTracks);
+
+        runAction = mixer.clipAction(cleanClip);
+        runAction.setLoop(THREE.LoopRepeat);
+        runAction.play();
+        runAction.paused = true;
+      }
+
+      charModelReady = true;
+      console.log('GLB 角色加载完成, scale:', modelScale, 'height:', modelHeight,
+        'center:', center.x.toFixed(2), center.y.toFixed(2), center.z.toFixed(2));
+    }, undefined, function(err) {
+      console.error('GLB 加载失败:', err);
+    });
+
+    // 小人阴影
+    var shadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.2, 24),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.13, depthWrite: false })
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    scene.add(shadow);
+
+    // ════════════════════════════════════════════════════
+    // HOUSE — 纪念碑谷风格小屋
+    // ════════════════════════════════════════════════════
+    function createHouse(x, z, facing) {
+      var g = new THREE.Group();
+      var wallCol = 0xe8d8c4;   // 暖白墙面
+      var roofCol = 0xc4856a;   // 赭红屋顶
+      var woodCol = 0xb89a7a;   // 木色
+      var doorCol = 0x8a6a50;   // 深木门
+      var winCol  = 0x7ab0c4;   // 窗户蓝
+
+      // ── 主体墙壁 ──
+      addMesh(new THREE.BoxGeometry(1.6, 1.2, 1.2), wallCol, g, [0, 0.6, 0], null, null, 0.035);
+
+      // ── 屋顶（三角棱柱 — 用拉伸形状模拟）──
+      var roofShape = new THREE.Shape();
+      roofShape.moveTo(-0.95, 0);
+      roofShape.lineTo(0, 0.7);
+      roofShape.lineTo(0.95, 0);
+      roofShape.lineTo(-0.95, 0);
+      var roofGeo = new THREE.ExtrudeGeometry(roofShape, {
+        depth: 1.4, bevelEnabled: false
+      });
+      roofGeo.translate(0, 0, -0.7);
+      addMesh(roofGeo, roofCol, g, [0, 1.2, 0], null, null, 0.03);
+
+      // ── 屋顶边脊（横梁装饰）──
+      addMesh(new THREE.CylinderGeometry(0.04, 0.04, 1.5, 6), woodCol, g, [0, 1.9, 0], [0, 0, Math.PI/2], null, 0.015);
+
+      // ── 门 ──
+      addMesh(new THREE.BoxGeometry(0.32, 0.6, 0.06), doorCol, g, [0, 0.32, 0.61], null, null, 0.018);
+      // 门框
+      addMesh(new THREE.BoxGeometry(0.38, 0.04, 0.07), woodCol, g, [0, 0.63, 0.61], null, null, 0.012);
+      addMesh(new THREE.BoxGeometry(0.04, 0.64, 0.07), woodCol, g, [-0.17, 0.32, 0.61], null, null, 0.012);
+      addMesh(new THREE.BoxGeometry(0.04, 0.64, 0.07), woodCol, g, [0.17, 0.32, 0.61], null, null, 0.012);
+
+      // ── 窗户（左右各一）──
+      // 左窗
+      addMesh(new THREE.BoxGeometry(0.28, 0.28, 0.06), winCol, g, [-0.5, 0.7, 0.61], null, null, 0.015);
+      addMesh(new THREE.BoxGeometry(0.32, 0.04, 0.07), woodCol, g, [-0.5, 0.85, 0.61], null, null, 0.01);
+      addMesh(new THREE.BoxGeometry(0.32, 0.04, 0.07), woodCol, g, [-0.5, 0.55, 0.61], null, null, 0.01);
+      addMesh(new THREE.BoxGeometry(0.04, 0.32, 0.07), woodCol, g, [-0.35, 0.7, 0.61], null, null, 0.01);
+      addMesh(new THREE.BoxGeometry(0.04, 0.32, 0.07), woodCol, g, [-0.65, 0.7, 0.61], null, null, 0.01);
+      // 窗格十字
+      addMesh(new THREE.BoxGeometry(0.28, 0.025, 0.08), woodCol, g, [-0.5, 0.7, 0.61], null, null, 0.008);
+      addMesh(new THREE.BoxGeometry(0.025, 0.28, 0.08), woodCol, g, [-0.5, 0.7, 0.61], null, null, 0.008);
+
+      // 右窗
+      addMesh(new THREE.BoxGeometry(0.28, 0.28, 0.06), winCol, g, [0.5, 0.7, 0.61], null, null, 0.015);
+      addMesh(new THREE.BoxGeometry(0.32, 0.04, 0.07), woodCol, g, [0.5, 0.85, 0.61], null, null, 0.01);
+      addMesh(new THREE.BoxGeometry(0.32, 0.04, 0.07), woodCol, g, [0.5, 0.55, 0.61], null, null, 0.01);
+      addMesh(new THREE.BoxGeometry(0.04, 0.32, 0.07), woodCol, g, [0.35, 0.7, 0.61], null, null, 0.01);
+      addMesh(new THREE.BoxGeometry(0.04, 0.32, 0.07), woodCol, g, [0.65, 0.7, 0.61], null, null, 0.01);
+      addMesh(new THREE.BoxGeometry(0.28, 0.025, 0.08), woodCol, g, [0.5, 0.7, 0.61], null, null, 0.008);
+      addMesh(new THREE.BoxGeometry(0.025, 0.28, 0.08), woodCol, g, [0.5, 0.7, 0.61], null, null, 0.008);
+
+      // ── 侧窗（两侧各一个小窗）──
+      addMesh(new THREE.BoxGeometry(0.06, 0.24, 0.24), winCol, g, [0.81, 0.7, 0], null, null, 0.012);
+      addMesh(new THREE.BoxGeometry(0.07, 0.28, 0.03), woodCol, g, [0.81, 0.7, -0.13], null, null, 0.008);
+      addMesh(new THREE.BoxGeometry(0.07, 0.28, 0.03), woodCol, g, [0.81, 0.7, 0.13], null, null, 0.008);
+      addMesh(new THREE.BoxGeometry(0.07, 0.03, 0.28), woodCol, g, [0.81, 0.83, 0], null, null, 0.008);
+      addMesh(new THREE.BoxGeometry(0.07, 0.03, 0.28), woodCol, g, [0.81, 0.57, 0], null, null, 0.008);
+
+      addMesh(new THREE.BoxGeometry(0.06, 0.24, 0.24), winCol, g, [-0.81, 0.7, 0], null, null, 0.012);
+      addMesh(new THREE.BoxGeometry(0.07, 0.28, 0.03), woodCol, g, [-0.81, 0.7, -0.13], null, null, 0.008);
+      addMesh(new THREE.BoxGeometry(0.07, 0.28, 0.03), woodCol, g, [-0.81, 0.7, 0.13], null, null, 0.008);
+      addMesh(new THREE.BoxGeometry(0.07, 0.03, 0.28), woodCol, g, [-0.81, 0.83, 0], null, null, 0.008);
+      addMesh(new THREE.BoxGeometry(0.07, 0.03, 0.28), woodCol, g, [-0.81, 0.57, 0], null, null, 0.008);
+
+      // ── 烟囱 ──
+      addMesh(new THREE.BoxGeometry(0.18, 0.5, 0.18), wallCol, g, [0.5, 1.7, -0.25], null, null, 0.02);
+      addMesh(new THREE.BoxGeometry(0.24, 0.06, 0.24), wallCol, g, [0.5, 1.95, -0.25], null, null, 0.015);
+
+      // ── 台阶 ──
+      addMesh(new THREE.BoxGeometry(0.5, 0.06, 0.12), woodCol, g, [0, 0.03, 0.72], null, null, 0.012);
+      addMesh(new THREE.BoxGeometry(0.44, 0.06, 0.08), woodCol, g, [0, 0.09, 0.78], null, null, 0.01);
+
+      // ── 地基 ──
+      addMesh(new THREE.BoxGeometry(1.8, 0.1, 1.4), 0xb0a898, g, [0, 0.0, 0], null, null, 0.02);
+
+      g.position.set(x, terrainHeight(x, z), z);
+      g.rotation.y = facing || 0;
+      scene.add(g);
+      return g;
+    }
+
+    // 放置房子（选一个不在河里的平坦位置）
+    var houseX = -4, houseZ = -4;
+    // 确保不在河里
+    if (isInRiver(houseX, houseZ)) { houseX = -5; houseZ = -5; }
+    var house = createHouse(houseX, houseZ, Math.PI * 0.15);
+
+    // ════════════════════════════════════════════════════
+    // BRIDGE — 拱桥横跨河流
+    // ════════════════════════════════════════════════════
+    function createBridge(x) {
+      var g = new THREE.Group();
+      var bridgeCol = 0xd4c8b8;   // 浅石色
+      var railCol   = 0xc4b8a8;   // 栏杆
+      var arcCol    = 0xbcb0a0;   // 拱洞色
+
+      var rz = riverCenterZ(x);
+      var bridgeWidth = 1.6;
+      var bridgeLen = 2.4;
+      var bridgeH = 0.12;
+
+      // ── 桥面 ──
+      addMesh(new THREE.BoxGeometry(bridgeLen, bridgeH, bridgeWidth),
+        bridgeCol, g, [0, 0.65, 0], null, null, 0.025);
+
+      // ── 桥面石纹装饰线 ──
+      for (var sl = -2; sl <= 2; sl++) {
+        addMesh(new THREE.BoxGeometry(bridgeLen, 0.015, 0.04),
+          arcCol, g, [0, 0.72, sl * 0.28], null, null, 0.005);
+      }
+
+      // ── 拱洞（用半圆柱表示）──
+      var archGeo = new THREE.CylinderGeometry(0.5, 0.5, bridgeWidth * 0.9, 16, 1, false, 0, Math.PI);
+      addMesh(archGeo, arcCol, g, [0, 0.15, 0], [Math.PI/2, 0, 0], null, 0.02);
+
+      // ── 桥墩（两端）──
+      addMesh(new THREE.BoxGeometry(0.35, 0.7, bridgeWidth * 0.85),
+        bridgeCol, g, [-bridgeLen/2 + 0.18, 0.3, 0], null, null, 0.025);
+      addMesh(new THREE.BoxGeometry(0.35, 0.7, bridgeWidth * 0.85),
+        bridgeCol, g, [bridgeLen/2 - 0.18, 0.3, 0], null, null, 0.025);
+
+      // ── 栏杆（两侧）──
+      for (var ri = 0; ri < 6; ri++) {
+        var rx = -bridgeLen/2 + 0.3 + ri * (bridgeLen - 0.6) / 5;
+        // 前栏杆
+        addMesh(new THREE.CylinderGeometry(0.025, 0.025, 0.35, 6),
+          railCol, g, [rx, 0.88, bridgeWidth/2 - 0.08], null, null, 0.012);
+        // 后栏杆
+        addMesh(new THREE.CylinderGeometry(0.025, 0.025, 0.35, 6),
+          railCol, g, [rx, 0.88, -bridgeWidth/2 + 0.08], null, null, 0.012);
+      }
+      // 栏杆横杆
+      addMesh(new THREE.BoxGeometry(bridgeLen - 0.3, 0.04, 0.05),
+        railCol, g, [0, 1.06, bridgeWidth/2 - 0.08], null, null, 0.01);
+      addMesh(new THREE.BoxGeometry(bridgeLen - 0.3, 0.04, 0.05),
+        railCol, g, [0, 1.06, -bridgeWidth/2 + 0.08], null, null, 0.01);
+
+      g.position.set(x, terrainHeight(x, rz) - 0.15, rz);
+      g.rotation.y = Math.PI / 2 + Math.atan2(
+        riverCenterZ(x + 0.5) - riverCenterZ(x - 0.5), 1.0);
+      scene.add(g);
+      return g;
+    }
+
+    // 放置两座桥
+    var bridge1 = createBridge(-2);
+    var bridge2 = createBridge(4);
+
+    // ════════════════════════════════════════════════════
+    // TOWER — 纪念碑谷标志性塔楼
+    // ════════════════════════════════════════════════════
+    function createTower(x, z, height, rotY) {
+      var g = new THREE.Group();
+      var wallCol   = 0xf0e0d0;   // 暖白
+      var accentCol = 0xc49070;   // 赭色装饰
+      var topCol    = 0xe8b87a;   // 金顶色
+      var windowCol = 0x6a98b0;   // 窗户深蓝
+      height = height || 3.5;
+
+      // ── 主塔身（八角形）──
+      addMesh(new THREE.CylinderGeometry(0.6, 0.65, height, 8),
+        wallCol, g, [0, height/2, 0], null, null, 0.03);
+
+      // ── 装饰环带（三段）──
+      for (var bi = 0; bi < 3; bi++) {
+        var by = height * (0.25 + bi * 0.28);
+        addMesh(new THREE.CylinderGeometry(0.68, 0.68, 0.06, 8),
+          accentCol, g, [0, by, 0], null, null, 0.015);
+      }
+
+      // ── 窗户（四面）──
+      var winGeo = new THREE.BoxGeometry(0.15, 0.3, 0.08);
+      for (var wi = 0; wi < 4; wi++) {
+        var wa = (wi / 4) * Math.PI * 2;
+        var wr = 0.63;
+        for (var wh = 0; wh < 2; wh++) {
+          var wy = height * (0.35 + wh * 0.3);
+          addMesh(winGeo, windowCol, g,
+            [Math.cos(wa) * wr, wy, Math.sin(wa) * wr],
+            [0, wa, 0], null, 0.012);
+          // 窗户拱顶
+          addMesh(new THREE.SphereGeometry(0.08, 8, 4, 0, Math.PI*2, 0, Math.PI/2),
+            accentCol, g,
+            [Math.cos(wa) * wr, wy + 0.15, Math.sin(wa) * wr],
+            [0, wa, 0], [1, 0.7, 1], 0.01);
+        }
+      }
+
+      // ── 塔顶平台 ──
+      addMesh(new THREE.CylinderGeometry(0.72, 0.68, 0.15, 8),
+        accentCol, g, [0, height + 0.07, 0], null, null, 0.02);
+
+      // ── 城垛（八个）──
+      for (var mi = 0; mi < 8; mi++) {
+        var ma = (mi / 8) * Math.PI * 2;
+        addMesh(new THREE.BoxGeometry(0.12, 0.2, 0.12),
+          wallCol, g,
+          [Math.cos(ma) * 0.62, height + 0.24, Math.sin(ma) * 0.62],
+          null, null, 0.015);
+      }
+
+      // ── 圆顶 ──
+      addMesh(new THREE.SphereGeometry(0.3, 12, 8, 0, Math.PI*2, 0, Math.PI/2),
+        topCol, g, [0, height + 0.32, 0], null, null, 0.02);
+
+      // ── 塔尖 ──
+      addMesh(new THREE.ConeGeometry(0.06, 0.35, 8),
+        topCol, g, [0, height + 0.78, 0], null, null, 0.015);
+
+      // ── 小旗（塔尖上方）──
+      var flagGroup = new THREE.Group();
+      addMesh(new THREE.CylinderGeometry(0.012, 0.012, 0.3, 4),
+        0x907060, flagGroup, [0, 0.15, 0], null, null, 0.008);
+      // 三角旗帜
+      var flagShape = new THREE.Shape();
+      flagShape.moveTo(0, 0);
+      flagShape.lineTo(0.22, 0.08);
+      flagShape.lineTo(0, 0.18);
+      var flagGeo = new THREE.ShapeGeometry(flagShape);
+      var flag = new THREE.Mesh(flagGeo, toonMat(0xd46040));
+      flag.position.set(0.01, 0.15, 0);
+      flagGroup.add(flag);
+      flagGroup.position.set(0, height + 0.9, 0);
+      g.add(flagGroup);
+
+      // ── 底座 ──
+      addMesh(new THREE.CylinderGeometry(0.8, 0.85, 0.2, 8),
+        0xb0a898, g, [0, 0.1, 0], null, null, 0.025);
+
+      g.position.set(x, terrainHeight(x, z), z);
+      g.rotation.y = rotY || 0;
+      scene.add(g);
+      return { group: g, flag: flagGroup };
+    }
+
+    // ════════════════════════════════════════════════════
+    // COLONNADE — 柱廊
+    // ════════════════════════════════════════════════════
+    function createColonnade(x, z, length, facing) {
+      var g = new THREE.Group();
+      var pillarCol  = 0xf0e0d0;
+      var beamCol    = 0xe0d0c0;
+      var baseCol    = 0xb0a898;
+      var count = Math.max(2, Math.round(length / 0.8));
+
+      // ── 底座 ──
+      addMesh(new THREE.BoxGeometry(length + 0.4, 0.12, 1.0),
+        baseCol, g, [0, 0.06, 0], null, null, 0.02);
+
+      for (var pi = 0; pi < count; pi++) {
+        var px = -length/2 + pi * length / (count - 1);
+        // 柱子
+        addMesh(new THREE.CylinderGeometry(0.08, 0.1, 1.8, 10),
+          pillarCol, g, [px, 1.02, 0], null, null, 0.02);
+        // 柱头
+        addMesh(new THREE.BoxGeometry(0.22, 0.08, 0.22),
+          beamCol, g, [px, 1.95, 0], null, null, 0.015);
+        // 柱基
+        addMesh(new THREE.BoxGeometry(0.2, 0.08, 0.2),
+          beamCol, g, [px, 0.16, 0], null, null, 0.015);
+      }
+
+      // ── 横梁 ──
+      addMesh(new THREE.BoxGeometry(length + 0.3, 0.14, 0.28),
+        beamCol, g, [0, 2.03, 0], null, null, 0.02);
+      // 顶部装饰带
+      addMesh(new THREE.BoxGeometry(length + 0.35, 0.06, 0.32),
+        0xc49070, g, [0, 2.13, 0], null, null, 0.015);
+
+      g.position.set(x, terrainHeight(x, z), z);
+      g.rotation.y = facing || 0;
+      scene.add(g);
+      return g;
+    }
+
+    // 放置塔楼和柱廊
+    var tower1 = createTower(6, -5, 3.5, 0.3);
+    var tower2 = createTower(-7, 5, 2.8, -0.5);
+    var colonnade1 = createColonnade(3, -6, 3.0, 0.15);
+
+    // ════════════════════════════════════════════════════
+    // SCATTER
+    // ════════════════════════════════════════════════════
+    function tryPlace(minDist) {
+      for (var a = 0; a < 60; a++) {
+        var px = (rand()-0.5) * (TERRAIN_SIZE-3);
+        var pz = (rand()-0.5) * (TERRAIN_SIZE-3);
+        if (isInRiver(px, pz)) continue;
+        var dx = px - charX, dz = pz - charZ;
+        if (Math.sqrt(dx*dx + dz*dz) < (minDist||1.5)) continue;
+        // 避开房子
+        var dhx = px - houseX, dhz = pz - houseZ;
+        if (Math.sqrt(dhx*dhx + dhz*dhz) < 2.5) continue;
+        return [px, pz];
+      }
+      return null;
+    }
+
+    for (var ti = 0; ti < 50; ti++) { var p = tryPlace(2.0); if(p) createTree(p[0], p[1]); }
+    for (var fi = 0; fi < 80; fi++) { var p = tryPlace(0.8); if(p) createFlower(p[0], p[1]); }
+    for (var gi = 0; gi < 120; gi++) { var p = tryPlace(0.5); if(p) createGrass(p[0], p[1]); }
+    for (var si = 0; si < 35; si++) { var p = tryPlace(1.2); if(p) createStone(p[0], p[1]); }
+    for (var ri = 0; ri < 20; ri++) {
+      var rx = (rand()-0.5) * (TERRAIN_SIZE-4);
+      var rz = riverCenterZ(rx) + (rand()>0.5?1:-1) * (0.7+rand()*0.5);
+      createStone(rx, rz, 0.1+rand()*0.15);
+    }
+
+    // ════════════════════════════════════════════════════
+    // BIRDS — 飞鸟群
+    // ════════════════════════════════════════════════════
+    var birds = [];
+    function createBird() {
+      var g = new THREE.Group();
+      // 身体
+      addMesh(new THREE.SphereGeometry(0.05, 6, 6), 0x4a4a5a, g, [0, 0, 0], null, [1.3, 0.8, 1], 0.01);
+      // 左翅
+      var lWing = new THREE.Group();
+      var wingShape = new THREE.Shape();
+      wingShape.moveTo(0, 0);
+      wingShape.lineTo(-0.15, 0.04);
+      wingShape.lineTo(-0.12, -0.02);
+      var wGeo = new THREE.ShapeGeometry(wingShape);
+      var wMesh = new THREE.Mesh(wGeo, toonMat(0x5a5a6a));
+      lWing.add(wMesh);
+      lWing.position.set(-0.04, 0.01, 0);
+      g.add(lWing);
+      // 右翅
+      var rWing = new THREE.Group();
+      var wMesh2 = new THREE.Mesh(wGeo.clone(), toonMat(0x5a5a6a));
+      wMesh2.scale.x = -1;
+      rWing.add(wMesh2);
+      rWing.position.set(0.04, 0.01, 0);
+      g.add(rWing);
+
+      // 随机起始位置
+      var cx = (rand() - 0.5) * 36;
+      var cy = 4 + rand() * 4;
+      var cz = (rand() - 0.5) * 36;
+      g.position.set(cx, cy, cz);
+      g.scale.set(0.8, 0.8, 0.8);
+      scene.add(g);
+
+      birds.push({
+        group: g,
+        lWing: lWing,
+        rWing: rWing,
+        cx: cx, cy: cy, cz: cz,
+        speed: 1.5 + rand() * 1.5,
+        radius: 3 + rand() * 5,
+        phase: rand() * Math.PI * 2,
+        wingSpeed: 5 + rand() * 3
+      });
+    }
+    for (var bi2 = 0; bi2 < 15; bi2++) createBird();
+
+    // ════════════════════════════════════════════════════
+    // BUTTERFLIES — 蝴蝶
+    // ════════════════════════════════════════════════════
+    var butterflies = [];
+    var bfColors = [0xd490b0, 0x90b0d4, 0xd4c090, 0xb0d490, 0xc090d4];
+    function createButterfly() {
+      var g = new THREE.Group();
+      var col = bfColors[Math.floor(rand() * bfColors.length)];
+
+      // 身体
+      addMesh(new THREE.CylinderGeometry(0.008, 0.008, 0.06, 4), 0x3a3a3a, g, [0, 0, 0], [0, 0, Math.PI/2], null, 0.005);
+
+      // 翅膀（左右各一对）
+      var wingGeo = new THREE.CircleGeometry(0.05, 6);
+      var lw1 = new THREE.Group();
+      lw1.add(new THREE.Mesh(wingGeo, toonMat(col)));
+      lw1.position.set(-0.01, 0.015, 0);
+      g.add(lw1);
+
+      var rw1 = new THREE.Group();
+      var rwm = new THREE.Mesh(wingGeo.clone(), toonMat(col));
+      rwm.scale.x = -1;
+      rw1.add(rwm);
+      rw1.position.set(0.01, 0.015, 0);
+      g.add(rw1);
+
+      // 下翅（稍小）
+      var wingGeo2 = new THREE.CircleGeometry(0.035, 5);
+      var lw2 = new THREE.Group();
+      lw2.add(new THREE.Mesh(wingGeo2, toonMat(col)));
+      lw2.position.set(-0.01, -0.01, 0);
+      g.add(lw2);
+
+      var rw2 = new THREE.Group();
+      var rwm2 = new THREE.Mesh(wingGeo2.clone(), toonMat(col));
+      rwm2.scale.x = -1;
+      rw2.add(rwm2);
+      rw2.position.set(0.01, -0.01, 0);
+      g.add(rw2);
+
+      var bx = (rand() - 0.5) * 30;
+      var bz = (rand() - 0.5) * 30;
+      var by = terrainHeight(bx, bz) + 0.5 + rand() * 1.5;
+      g.position.set(bx, by, bz);
+      g.scale.set(0.7, 0.7, 0.7);
+      scene.add(g);
+
+      butterflies.push({
+        group: g,
+        lw1: lw1, rw1: rw1, lw2: lw2, rw2: rw2,
+        baseX: bx, baseY: by, baseZ: bz,
+        phase: rand() * Math.PI * 2,
+        wingSpeed: 8 + rand() * 6,
+        driftSpeed: 0.3 + rand() * 0.4
+      });
+    }
+    for (var bfi = 0; bfi < 20; bfi++) createButterfly();
+
+    // ════════════════════════════════════════════════════
+    // CLOUDS — 天空云朵
+    // ════════════════════════════════════════════════════
+    var clouds = [];
+    function createCloud(x, y, z, scale) {
+      var g = new THREE.Group();
+      var cloudCol = 0xffffff;
+      var parts = 3 + Math.floor(rand() * 4);
+      for (var ci = 0; ci < parts; ci++) {
+        var cr = (0.4 + rand() * 0.6) * (scale || 1);
+        var cx = (rand() - 0.5) * 1.2 * (scale || 1);
+        var cy = (rand() - 0.3) * 0.3 * (scale || 1);
+        var cz = (rand() - 0.5) * 0.5 * (scale || 1);
+        var cloudGeo = new THREE.SphereGeometry(cr, 8, 6);
+        var cloudMesh = new THREE.Mesh(cloudGeo, new THREE.MeshBasicMaterial({
+          color: cloudCol, transparent: true, opacity: 0.65
+        }));
+        cloudMesh.position.set(cx, cy, cz);
+        cloudMesh.scale.set(1, 0.5, 1);
+        g.add(cloudMesh);
+      }
+      g.position.set(x, y, z);
+      scene.add(g);
+      clouds.push({ group: g, baseX: x, speed: 0.15 + rand() * 0.2 });
+      return g;
+    }
+
+    // 散布云朵
+    for (var cli = 0; cli < 15; cli++) {
+      createCloud(
+        (rand() - 0.5) * 60,
+        8 + rand() * 5,
+        (rand() - 0.5) * 60,
+        0.7 + rand() * 0.8
+      );
+    }
+
+    // ════════════════════════════════════════════════════
+    // PARTICLES — 萤火虫 / 花瓣飘落
+    // ════════════════════════════════════════════════════
+    // 花瓣粒子
+    var petalCount = 80;
+    var petalPositions = new Float32Array(petalCount * 3);
+    var petalVelocities = [];
+    var petalPhases = [];
+    for (var pi2 = 0; pi2 < petalCount; pi2++) {
+      petalPositions[pi2*3]     = (rand() - 0.5) * 44;
+      petalPositions[pi2*3 + 1] = 1 + rand() * 6;
+      petalPositions[pi2*3 + 2] = (rand() - 0.5) * 44;
+      petalVelocities.push({
+        x: (rand() - 0.5) * 0.3,
+        y: -(0.2 + rand() * 0.4),
+        z: (rand() - 0.5) * 0.3
+      });
+      petalPhases.push(rand() * Math.PI * 2);
+    }
+
+    var petalGeo = new THREE.BufferGeometry();
+    petalGeo.setAttribute('position', new THREE.Float32BufferAttribute(petalPositions, 3));
+    var petalMat = new THREE.PointsMaterial({
+      color: 0xf0c0c0,
+      size: 0.06,
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false
+    });
+    var petals = new THREE.Points(petalGeo, petalMat);
+    scene.add(petals);
+
+    // 萤火虫（傍晚氛围粒子）
+    var fireflyCount = 50;
+    var fireflyPositions = new Float32Array(fireflyCount * 3);
+    var fireflyData = [];
+    for (var ffi = 0; ffi < fireflyCount; ffi++) {
+      var fx = (rand() - 0.5) * 36;
+      var fz = (rand() - 0.5) * 36;
+      var fy = terrainHeight(fx, fz) + 0.3 + rand() * 1.5;
+      fireflyPositions[ffi*3]     = fx;
+      fireflyPositions[ffi*3 + 1] = fy;
+      fireflyPositions[ffi*3 + 2] = fz;
+      fireflyData.push({
+        baseX: fx, baseY: fy, baseZ: fz,
+        phase: rand() * Math.PI * 2,
+        speed: 0.5 + rand() * 0.8,
+        radius: 0.3 + rand() * 0.5
+      });
+    }
+
+    var fireflyGeo = new THREE.BufferGeometry();
+    fireflyGeo.setAttribute('position', new THREE.Float32BufferAttribute(fireflyPositions, 3));
+    var fireflyMat = new THREE.PointsMaterial({
+      color: 0xe8d870,
+      size: 0.08,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false
+    });
+    var fireflies = new THREE.Points(fireflyGeo, fireflyMat);
+    scene.add(fireflies);
+
+    // ════════════════════════════════════════════════════
+    // LIGHTS
+    // ════════════════════════════════════════════════════
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    var dl = new THREE.DirectionalLight(0xffffff, 0.55);
+    dl.position.set(5, 8, 6);
+    scene.add(dl);
+
+    // ════════════════════════════════════════════════════
+    // KEYBOARD INPUT — WASD
+    // ════════════════════════════════════════════════════
+    var keys = {};
+    window.addEventListener('keydown', function(e) {
+      keys[e.key.toLowerCase()] = true;
+    });
+    window.addEventListener('keyup', function(e) {
+      keys[e.key.toLowerCase()] = false;
+    });
+
+    var MOVE_SPEED = 3.5;
+    var TERRAIN_BOUND = TERRAIN_SIZE / 2 - 1;
+
+    // 初始化相机位置（后方上方）
+    camera.position.set(charX, terrainHeight(charX, charZ) + camHeight, charZ + camDistance);
+    camera.lookAt(charX, terrainHeight(charX, charZ) + 0.4, charZ);
+
+    // ════════════════════════════════════════════════════
+    // ANIMATION
+    // ════════════════════════════════════════════════════
+    var clock = new THREE.Clock();
+    var charFacing = 0; // 人物朝向角度
+    var targetFacing = 0;
+    var isMoving = false;
+
+    // 行走摆动相关
+    var walkCycle = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      var dt = clock.getDelta();
+      var t = clock.getElapsedTime();
+
+      // ── 溪水 ──
+      wMat.uniforms.uTime.value = t;
+
+      // ── WASD 移动 ──
+      // 获取相机在 xz 平面的朝向
+      var camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      camDir.y = 0;
+      camDir.normalize();
+
+      var camRight = new THREE.Vector3();
+      camRight.crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
+
+      var moveDir = new THREE.Vector3(0, 0, 0);
+      isMoving = false;
+
+      if (keys['w'] || keys['arrowup'])    { moveDir.add(camDir);  isMoving = true; }
+      if (keys['s'] || keys['arrowdown'])   { moveDir.sub(camDir);  isMoving = true; }
+      if (keys['a'] || keys['arrowleft'])   { moveDir.sub(camRight); isMoving = true; }
+      if (keys['d'] || keys['arrowright'])  { moveDir.add(camRight); isMoving = true; }
+
+      if (isMoving) {
+        moveDir.normalize();
+        var newX = character.position.x + moveDir.x * MOVE_SPEED * dt;
+        var newZ = character.position.z + moveDir.z * MOVE_SPEED * dt;
+
+        // 边界限制
+        newX = Math.max(-TERRAIN_BOUND, Math.min(TERRAIN_BOUND, newX));
+        newZ = Math.max(-TERRAIN_BOUND, Math.min(TERRAIN_BOUND, newZ));
+
+        character.position.x = newX;
+        character.position.z = newZ;
+
+        // 人物朝向（平滑转向）
+        targetFacing = Math.atan2(moveDir.x, moveDir.z);
+
+        // 行走动画周期
+        walkCycle += dt * 8;
+      }
+
+      // 高度适配地形（平滑过渡）
+      var targetY = terrainHeight(character.position.x, character.position.z);
+      character.position.y += (targetY - character.position.y) * 0.12;
+
+      // 平滑转向
+      var facingDiff = targetFacing - charFacing;
+      // 处理角度环绕
+      while (facingDiff > Math.PI) facingDiff -= Math.PI * 2;
+      while (facingDiff < -Math.PI) facingDiff += Math.PI * 2;
+      charFacing += facingDiff * 0.12;
+      character.rotation.y = charFacing;
+
+      // ── 阴影跟随 ──
+      shadow.position.set(character.position.x, character.position.y + 0.02, character.position.z);
+
+      // ── GLB 动画更新 ──
+      if (mixer) {
+        mixer.update(dt);
+      }
+      if (runAction) {
+        if (isMoving) {
+          // 移动时播放跑步动画
+          if (runAction.paused) {
+            runAction.paused = false;
+          }
+          // 阴影微调
+          var wk = walkCycle;
+          var ss = 0.9 + Math.abs(Math.sin(wk)) * 0.2;
+          shadow.scale.set(ss, ss, 1);
+        } else {
+          // 静止时暂停动画
+          if (!runAction.paused) {
+            runAction.paused = true;
+          }
+          shadow.scale.set(1, 1, 1);
+        }
+      }
+
+      // ── 第三人称摄像机跟随 ──
+      // 摄像机始终在人物 "后上方"
+      var charPos = character.position;
+      // 以人物朝向 + 鼠标旋转偏移计算摄像机环绕角度
+      var orbitAngle = charFacing + Math.PI + camRotX; // 在人物背后
+      var heightOffset = camHeight + camRotY * 3;
+      heightOffset = Math.max(camMinY, Math.min(camMaxY, heightOffset));
+
+      // 目标摄像机位置（人物后上方）
+      var targetCamX = charPos.x + Math.sin(orbitAngle) * camDistance;
+      var targetCamZ = charPos.z + Math.cos(orbitAngle) * camDistance;
+      var groundH = terrainHeight(targetCamX, targetCamZ);
+      var targetCamY = charPos.y + heightOffset;
+      // 确保摄像机不低于地面
+      if (targetCamY < groundH + 0.5) targetCamY = groundH + 0.5;
+
+      // 平滑跟随（帧率无关插值）
+      var lerpFactor = 1.0 - Math.pow(0.001, dt);
+      camera.position.x += (targetCamX - camera.position.x) * lerpFactor;
+      camera.position.y += (targetCamY - camera.position.y) * lerpFactor;
+      camera.position.z += (targetCamZ - camera.position.z) * lerpFactor;
+
+      // 摄像机看向人物上半身
+      var lookTarget = new THREE.Vector3(charPos.x, charPos.y + 0.5, charPos.z);
+      camera.lookAt(lookTarget);
+
+      // ── 树木摇摆 ──
+      for (var i = 0; i < trees.length; i++) {
+        var ph = i * 1.3;
+        trees[i].rotation.z = Math.sin(t*0.6 + ph) * 0.02;
+        trees[i].rotation.x = Math.sin(t*0.4 + ph + 0.5) * 0.01;
+      }
+
+      // ── 花朵摇曳 ──
+      for (var i = 0; i < flowers.length; i++) {
+        var ph = i * 0.9;
+        flowers[i].rotation.z = Math.sin(t*1.1 + ph) * 0.04;
+        flowers[i].rotation.x = Math.sin(t*0.8 + ph + 0.3) * 0.02;
+      }
+
+      // ── 小草随风 ──
+      for (var i = 0; i < grasses.length; i++) {
+        var ph = i * 0.6;
+        grasses[i].rotation.z = Math.sin(t*1.5 + ph) * 0.06;
+        grasses[i].rotation.x = Math.sin(t*1.0 + ph + 0.2) * 0.03;
+      }
+
+      // ── 飞鸟动画 ──
+      for (var i = 0; i < birds.length; i++) {
+        var b = birds[i];
+        var angle = t * b.speed * 0.3 + b.phase;
+        b.group.position.x = b.cx + Math.cos(angle) * b.radius;
+        b.group.position.z = b.cz + Math.sin(angle) * b.radius;
+        b.group.position.y = b.cy + Math.sin(t * 0.8 + b.phase) * 0.5;
+        // 朝向飞行方向
+        b.group.rotation.y = -angle + Math.PI / 2;
+        // 翅膀扇动
+        var wingAngle = Math.sin(t * b.wingSpeed + b.phase) * 0.6;
+        b.lWing.rotation.z = wingAngle;
+        b.rWing.rotation.z = -wingAngle;
+      }
+
+      // ── 蝴蝶动画 ──
+      for (var i = 0; i < butterflies.length; i++) {
+        var bf = butterflies[i];
+        var bfT = t * bf.driftSpeed;
+        bf.group.position.x = bf.baseX + Math.sin(bfT + bf.phase) * 1.5;
+        bf.group.position.z = bf.baseZ + Math.cos(bfT * 0.7 + bf.phase) * 1.5;
+        bf.group.position.y = bf.baseY + Math.sin(bfT * 1.3 + bf.phase) * 0.4;
+        bf.group.rotation.y = Math.sin(bfT + bf.phase) * 0.5 + bfT * 0.5;
+        // 翅膀扇动
+        var bwAngle = Math.sin(t * bf.wingSpeed + bf.phase) * 0.8;
+        bf.lw1.rotation.y = -bwAngle;
+        bf.rw1.rotation.y = bwAngle;
+        bf.lw2.rotation.y = -bwAngle * 0.8;
+        bf.rw2.rotation.y = bwAngle * 0.8;
+      }
+
+      // ── 云朵飘动 ──
+      for (var i = 0; i < clouds.length; i++) {
+        var cl = clouds[i];
+        cl.group.position.x = cl.baseX + t * cl.speed;
+        // 循环
+        if (cl.group.position.x > 40) {
+          cl.group.position.x -= 80;
+          cl.baseX -= 80;
+        }
+      }
+
+      // ── 花瓣飘落 ──
+      var pp = petals.geometry.attributes.position;
+      for (var i = 0; i < petalCount; i++) {
+        var px = pp.getX(i) + petalVelocities[i].x * dt;
+        var py = pp.getY(i) + petalVelocities[i].y * dt;
+        var pz = pp.getZ(i) + petalVelocities[i].z * dt;
+        // 水平飘摆
+        px += Math.sin(t * 1.5 + petalPhases[i]) * 0.005;
+        pz += Math.cos(t * 1.2 + petalPhases[i]) * 0.005;
+        // 重置到顶部
+        if (py < terrainHeight(px, pz) + 0.1) {
+          px = (Math.random() - 0.5) * 44;
+          py = 4 + Math.random() * 4;
+          pz = (Math.random() - 0.5) * 44;
+        }
+        pp.setXYZ(i, px, py, pz);
+      }
+      pp.needsUpdate = true;
+
+      // ── 萤火虫闪烁 ──
+      var ffp = fireflies.geometry.attributes.position;
+      for (var i = 0; i < fireflyCount; i++) {
+        var fd = fireflyData[i];
+        ffp.setXYZ(i,
+          fd.baseX + Math.sin(t * fd.speed + fd.phase) * fd.radius,
+          fd.baseY + Math.sin(t * fd.speed * 1.3 + fd.phase + 1) * fd.radius * 0.6,
+          fd.baseZ + Math.cos(t * fd.speed * 0.8 + fd.phase) * fd.radius
+        );
+      }
+      ffp.needsUpdate = true;
+      // 萤火虫闪烁效果
+      fireflyMat.opacity = 0.5 + Math.sin(t * 2.0) * 0.3;
+
+      // ── 塔楼旗帜飘动 ──
+      if (tower1.flag) tower1.flag.rotation.y = Math.sin(t * 2.0) * 0.3;
+      if (tower2.flag) tower2.flag.rotation.y = Math.sin(t * 2.0 + 1) * 0.3;
+
+      // ── 小地图绘制 ──
+      if (minimapCtx) {
+        minimapCtx.fillStyle = 'rgba(184,196,160,0.85)';
+        minimapCtx.fillRect(0, 0, 120, 120);
+        // 河流
+        minimapCtx.strokeStyle = 'rgba(122,176,196,0.7)';
+        minimapCtx.lineWidth = 4;
+        minimapCtx.beginPath();
+        for (var mi2 = -120; mi2 <= 120; mi2 += 2) {
+          var mx = mi2 / 5;
+          var mz = riverCenterZ(mx);
+          var sx = 60 + mx * (120 / TERRAIN_SIZE);
+          var sy = 60 + mz * (120 / TERRAIN_SIZE);
+          mi2 === -60 ? minimapCtx.moveTo(sx, sy) : minimapCtx.lineTo(sx, sy);
+        }
+        minimapCtx.stroke();
+        // 建筑标记
+        minimapCtx.fillStyle = '#c49070';
+        var hsx = 60 + houseX * (120/TERRAIN_SIZE), hsy = 60 + houseZ * (120/TERRAIN_SIZE);
+        minimapCtx.fillRect(hsx-3, hsy-3, 6, 6);
+        var t1sx = 60 + 6 * (120/TERRAIN_SIZE), t1sy = 60 + (-5) * (120/TERRAIN_SIZE);
+        minimapCtx.beginPath(); minimapCtx.arc(t1sx, t1sy, 3, 0, Math.PI*2); minimapCtx.fill();
+        var t2sx = 60 + (-7) * (120/TERRAIN_SIZE), t2sy = 60 + 5 * (120/TERRAIN_SIZE);
+        minimapCtx.beginPath(); minimapCtx.arc(t2sx, t2sy, 3, 0, Math.PI*2); minimapCtx.fill();
+        // 人物位置
+        var cpx = 60 + character.position.x * (120/TERRAIN_SIZE);
+        var cpy = 60 + character.position.z * (120/TERRAIN_SIZE);
+        minimapCtx.fillStyle = '#d46040';
+        minimapCtx.beginPath(); minimapCtx.arc(cpx, cpy, 4, 0, Math.PI*2); minimapCtx.fill();
+        minimapCtx.fillStyle = '#fff';
+        minimapCtx.beginPath(); minimapCtx.arc(cpx, cpy, 2, 0, Math.PI*2); minimapCtx.fill();
+        // 朝向指示
+        minimapCtx.strokeStyle = '#d46040';
+        minimapCtx.lineWidth = 2;
+        minimapCtx.beginPath();
+        minimapCtx.moveTo(cpx, cpy);
+        minimapCtx.lineTo(cpx + Math.sin(charFacing)*8, cpy + Math.cos(charFacing)*8);
+        minimapCtx.stroke();
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // ── 小地图初始化 ──
+    var minimapCanvas = document.getElementById('minimapCanvas');
+    var minimapCtx = minimapCanvas ? minimapCanvas.getContext('2d') : null;
+
+    // ── 加载屏幕 ──
+    var loadBar = document.getElementById('loadBar');
+    var loadScreen = document.getElementById('loadScreen');
+    // 先设为 50%（场景已创建），等 GLB 加载完再到 100%
+    if (loadBar) loadBar.style.width = '50%';
+    function checkModelLoaded() {
+      if (charModelReady) {
+        if (loadBar) loadBar.style.width = '100%';
+        setTimeout(function() {
+          if (loadScreen) loadScreen.classList.add('fade');
+          setTimeout(function() {
+            if (loadScreen) loadScreen.style.display = 'none';
+          }, 1600);
+        }, 300);
+      } else {
+        setTimeout(checkModelLoaded, 100);
+      }
+    }
+    checkModelLoaded();
+
+    animate();
+
+    // ════════════════════════════════════════════════════
+    // RESIZE
+    // ════════════════════════════════════════════════════
+    window.addEventListener('resize', function() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  })();
+  </script>
+</body>
+</html>
