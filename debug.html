@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>FBX Debug</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #0f0; }
+    .ok { color: #0f0; }
+    .err { color: #f44; }
+    .warn { color: #ff0; }
+    #log { white-space: pre-wrap; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h2>FBX 加载诊断</h2>
+  <div id="log"></div>
+
+  <script>
+    var logEl = document.getElementById('log');
+    function log(msg, cls) {
+      var d = document.createElement('div');
+      d.className = cls || '';
+      d.textContent = msg;
+      logEl.appendChild(d);
+    }
+  </script>
+
+  <script src="lib/three.min.js"></script>
+  <script>
+    if (typeof THREE !== 'undefined') {
+      log('[OK] THREE loaded, revision: ' + THREE.REVISION, 'ok');
+    } else {
+      log('[FAIL] THREE not loaded', 'err');
+    }
+  </script>
+
+  <script src="lib/fflate.js"></script>
+  <script>
+    if (typeof fflate !== 'undefined') {
+      log('[OK] fflate loaded, keys: ' + Object.keys(fflate).slice(0, 5).join(', ') + '...', 'ok');
+    } else {
+      log('[FAIL] fflate not loaded', 'err');
+    }
+  </script>
+
+  <script src="lib/NURBSUtils.js"></script>
+  <script>
+    if (typeof THREE !== 'undefined' && THREE.NURBSUtils) {
+      log('[OK] THREE.NURBSUtils loaded', 'ok');
+    } else {
+      log('[WARN] THREE.NURBSUtils not found (may be OK if model does not use NURBS)', 'warn');
+    }
+  </script>
+
+  <script src="lib/NURBSCurve.js"></script>
+  <script>
+    if (typeof THREE !== 'undefined' && THREE.NURBSCurve) {
+      log('[OK] THREE.NURBSCurve loaded', 'ok');
+    } else {
+      log('[WARN] THREE.NURBSCurve not found (may be OK if model does not use NURBS)', 'warn');
+    }
+  </script>
+
+  <script src="lib/FBXLoader.js"></script>
+  <script>
+    if (typeof THREE !== 'undefined' && THREE.FBXLoader) {
+      log('[OK] THREE.FBXLoader loaded', 'ok');
+    } else {
+      log('[FAIL] THREE.FBXLoader not loaded!', 'err');
+    }
+  </script>
+
+  <script>
+    log('');
+    log('=== 开始加载 FBX ===');
+
+    // 先用 fetch 测试文件是否可下载
+    fetch('steampunk_mill.fbx')
+      .then(function(resp) {
+        log('[OK] fetch status: ' + resp.status + ' type: ' + resp.headers.get('content-type'), 'ok');
+        return resp.arrayBuffer();
+      })
+      .then(function(buf) {
+        log('[OK] ArrayBuffer 大小: ' + buf.byteLength + ' bytes', 'ok');
+        var arr = new Uint8Array(buf);
+        var header = '';
+        for (var i = 0; i < Math.min(21, arr.length); i++) {
+          header += String.fromCharCode(arr[i]);
+        }
+        log('[OK] 头部: ' + JSON.stringify(header), 'ok');
+
+        log('');
+        log('=== 使用 FBXLoader 加载 ===');
+
+        try {
+          var loader = new THREE.FBXLoader();
+          log('[OK] FBXLoader 实例化成功', 'ok');
+
+          loader.load(
+            'steampunk_mill.fbx',
+            function(object) {
+              log('[OK] FBX 加载成功!', 'ok');
+              log('  类型: ' + object.type, 'ok');
+              log('  子对象: ' + object.children.length, 'ok');
+              var meshCount = 0;
+              object.traverse(function(c) { if (c.isMesh) meshCount++; });
+              log('  Mesh 数量: ' + meshCount, 'ok');
+            },
+            function(xhr) {
+              log('  进度: ' + xhr.loaded + '/' + (xhr.total || '?') + ' bytes');
+            },
+            function(error) {
+              log('[FAIL] FBXLoader 错误!', 'err');
+              log('  message: ' + (error.message || String(error)), 'err');
+              log('  stack: ' + (error.stack || 'N/A'), 'err');
+
+              // 尝试用 parse 方法直接解析 ArrayBuffer
+              log('');
+              log('=== 尝试直接用 parse() 解析 ArrayBuffer ===');
+              try {
+                var loader2 = new THREE.FBXLoader();
+                var mgr = new THREE.LoadingManager();
+                loader2.manager = mgr;
+                var result = loader2.parse(buf, '');
+                log('[OK] parse() 成功!', 'ok');
+                log('  类型: ' + result.type + ', children: ' + result.children.length, 'ok');
+              } catch(e2) {
+                log('[FAIL] parse() 也失败!', 'err');
+                log('  message: ' + e2.message, 'err');
+                log('  stack: ' + (e2.stack || 'N/A'), 'err');
+              }
+            }
+          );
+        } catch(e) {
+          log('[FAIL] FBXLoader 实例化或调用失败: ' + e.message, 'err');
+          log('  stack: ' + (e.stack || 'N/A'), 'err');
+        }
+      })
+      .catch(function(err) {
+        log('[FAIL] fetch 失败: ' + err.message, 'err');
+      });
+  </script>
+</body>
+</html>

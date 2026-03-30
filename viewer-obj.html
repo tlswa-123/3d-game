@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>三渲二 · OBJ 模型</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #e8e0d4;
+      overflow: hidden;
+      height: 100vh;
+      font-family: 'Helvetica Neue', 'PingFang SC', sans-serif;
+    }
+    canvas { display: block; }
+
+    .loading {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #e8e0d4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      transition: opacity 1.2s ease;
+    }
+    .loading.fade { opacity: 0; pointer-events: none; }
+    .loading h1 {
+      font-size: 22px;
+      color: #8a7e72;
+      letter-spacing: 6px;
+      margin-bottom: 20px;
+      font-weight: 300;
+    }
+    .loading-bar {
+      width: 200px; height: 3px;
+      background: rgba(138,126,114,0.2);
+      border-radius: 2px; overflow: hidden;
+    }
+    .loading-bar-inner {
+      width: 0%; height: 100%;
+      background: #c49070;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .loading p {
+      margin-top: 15px;
+      color: #b0a898;
+      font-size: 11px;
+      letter-spacing: 2px;
+      max-width: 80%;
+      text-align: center;
+      word-break: break-all;
+    }
+
+    .title-bar {
+      position: fixed; top: 24px; left: 50%;
+      transform: translateX(-50%);
+      color: #8a7e72; font-size: 13px;
+      letter-spacing: 3px; opacity: 0.6;
+      user-select: none; text-transform: uppercase;
+    }
+
+    .hint {
+      position: fixed; bottom: 28px; left: 50%;
+      transform: translateX(-50%);
+      color: #8a7e72; font-size: 11px;
+      letter-spacing: 1px; opacity: 0.5;
+      user-select: none;
+      background: rgba(138,126,114,0.08);
+      padding: 8px 20px; border-radius: 20px;
+    }
+    .hint kbd {
+      display: inline-block;
+      background: rgba(138,126,114,0.15);
+      border-radius: 4px; padding: 1px 6px;
+      font-family: inherit; font-size: 11px; margin: 0 2px;
+    }
+
+    .info-panel {
+      position: fixed; bottom: 70px; right: 24px;
+      color: #8a7e72; font-size: 11px;
+      letter-spacing: 1px; opacity: 0.5;
+      user-select: none; text-align: right; line-height: 1.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="loading" id="loadScreen">
+    <h1>OBJ 模型</h1>
+    <div class="loading-bar"><div class="loading-bar-inner" id="loadBar"></div></div>
+    <p id="loadStatus">正在加载...</p>
+  </div>
+
+  <div class="title-bar">OBJ Model · Toon Render</div>
+  <div class="hint">鼠标拖拽旋转 · 滚轮缩放 · <kbd>R</kbd> 重置视角</div>
+  <div class="info-panel" id="infoPanel"></div>
+
+  <!-- Three.js 和 OBJLoader -->
+  <script src="lib/three.min.js"></script>
+  <script src="lib/OBJLoader.js"></script>
+
+  <script>
+  (function () {
+    'use strict';
+
+    var loadBar = document.getElementById('loadBar');
+    var loadStatus = document.getElementById('loadStatus');
+    var loadScreen = document.getElementById('loadScreen');
+
+    function setProgress(pct) { loadBar.style.width = Math.min(pct, 100) + '%'; }
+    function setStatus(text) { loadStatus.textContent = text; }
+    function showError(msg) {
+      loadStatus.style.whiteSpace = 'pre-wrap';
+      loadStatus.style.fontSize = '10px';
+      loadStatus.style.maxWidth = '90%';
+      loadStatus.style.textAlign = 'left';
+      loadStatus.textContent = msg;
+      document.querySelector('.loading h1').style.color = '#c47070';
+      console.error(msg);
+    }
+
+    // 运行时检查
+    if (typeof THREE === 'undefined') { showError('Three.js 未加载'); return; }
+    if (typeof THREE.OBJLoader === 'undefined') { showError('OBJLoader 未加载'); return; }
+
+    setStatus('脚本就绪，初始化场景...');
+    setProgress(5);
+
+    function hideLoading() {
+      setProgress(100);
+      setTimeout(function () {
+        loadScreen.classList.add('fade');
+        setTimeout(function () { loadScreen.style.display = 'none'; }, 1500);
+      }, 400);
+    }
+
+    // 场景设置
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe8e0d4);
+    scene.fog = new THREE.FogExp2(0xe8e0d4, 0.015);
+
+    var camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 5000);
+    camera.position.set(8, 6, 8);
+    camera.lookAt(0, 1, 0);
+
+    var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.NoToneMapping; // 不用 ACES，避免 ToonMaterial 变暗
+    document.body.appendChild(renderer.domElement);
+
+    // 三渲二材质
+    var PALETTE = {
+      metal: 0xb0a090, copper: 0xc49070, wood: 0xa08060,
+      brick: 0xc4907a, stone: 0xb8b0a0, dark: 0x605040,
+      accent: 0xd4a574, gear: 0x9a8a70, roof: 0x8a7060,
+      ground: 0xc4b8a0, fallback: 0xb8a890
+    };
+
+    var colorPool = [
+      0xc49070, 0xb0a090, 0xa08060, 0xc4907a, 0xb8b0a0, 0xd4a574,
+      0x9a8a70, 0x8a7060, 0xbaa888, 0xa89478, 0xc4a898, 0x907868
+    ];
+    var colorIndex = 0;
+
+    function createToonMaterial(color) {
+      var mat = new THREE.MeshToonMaterial({
+        color: color
+        // 默认 2 级色阶，不传 gradientMap
+      });
+      return mat;
+    }
+
+    function createOutlineMaterial(thickness, outlineColor) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uThick: { value: thickness || 0.025 },
+          uOutlineColor: { value: new THREE.Color(outlineColor || 0x1c1714) }
+        },
+        vertexShader: [
+          'uniform float uThick;',
+          'void main() {',
+          '  vec3 p = position + normal * uThick;',
+          '  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);',
+          '}'
+        ].join('\n'),
+        fragmentShader: [
+          'uniform vec3 uOutlineColor;',
+          'void main() {',
+          '  gl_FragColor = vec4(uOutlineColor, 1.0);',
+          '}'
+        ].join('\n'),
+        side: THREE.BackSide
+      });
+    }
+
+    // 地面
+    var groundGeo = new THREE.CircleGeometry(80, 64);
+    groundGeo.rotateX(-Math.PI / 2);
+    var groundMesh = new THREE.Mesh(groundGeo, createToonMaterial(PALETTE.ground));
+    groundMesh.position.y = -0.01;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+
+    var groundOutline = new THREE.Mesh(groundGeo, createOutlineMaterial(0.03, 0x8a7e60));
+    groundOutline.position.y = -0.01;
+    scene.add(groundOutline);
+
+    // 光照（大幅增强）
+    var ambLight = new THREE.AmbientLight(0xffffff, 1.0);
+    scene.add(ambLight);
+
+    var dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    dirLight.position.set(8, 12, 8);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.near = 0.1;
+    dirLight.shadow.camera.far = 200;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
+    scene.add(dirLight);
+
+    var dirLight2 = new THREE.DirectionalLight(0xfff5e8, 0.8);
+    dirLight2.position.set(-8, 8, -8);
+    scene.add(dirLight2);
+
+    var hemiLight = new THREE.HemisphereLight(0xffffff, 0xc4b8a0, 0.8);
+    scene.add(hemiLight);
+
+    // 加载 OBJ（手动 XHR + parse，避免 loader.load 吞掉回调异常）
+    setProgress(10);
+    setStatus('正在下载 OBJ 模型...');
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', 'model.obj', true);
+    xhr.responseType = 'text';
+
+    xhr.onprogress = function (e) {
+      if (e.total > 0) {
+        var pct = Math.round(e.loaded / e.total * 100);
+        setProgress(10 + pct * 0.7);
+        setStatus('下载模型 ' + pct + '% (' + Math.round(e.loaded/1024) + 'KB)');
+      } else {
+        setStatus('下载模型中... ' + Math.round(e.loaded/1024) + 'KB');
+      }
+    };
+
+    xhr.onerror = function () {
+      showError('OBJ 下载失败（网络错误）');
+    };
+
+    xhr.onload = function () {
+      if (xhr.status !== 200) {
+        showError('OBJ 下载失败: HTTP ' + xhr.status);
+        return;
+      }
+
+      setProgress(80);
+      setStatus('模型已下载，解析中...');
+      console.log('OBJ 下载完成, 大小:', xhr.responseText.length, '字符');
+
+      // 第一步：解析 OBJ
+      var object;
+      try {
+        var loader = new THREE.OBJLoader();
+        object = loader.parse(xhr.responseText);
+        console.log('OBJ 解析成功, type:', object.type, 'children:', object.children.length);
+      } catch (parseErr) {
+        showError('OBJ 解析失败: ' + parseErr.message + '\n' + parseErr.stack);
+        console.error('OBJ 解析失败:', parseErr);
+        return;
+      }
+
+      // 第二步：计算包围盒
+      var meshCount = 0;
+      var box, center, size, maxDim;
+      try {
+        setStatus('计算包围盒...');
+        box = new THREE.Box3();
+        var allMeshes = [];
+        object.traverse(function (child) {
+          if (child.isMesh) allMeshes.push(child);
+        });
+        console.log('找到 Mesh 数量:', allMeshes.length);
+
+        for (var m = 0; m < allMeshes.length; m++) {
+          allMeshes[m].updateWorldMatrix(true, false);
+          var childBox = new THREE.Box3().setFromObject(allMeshes[m]);
+          if (!childBox.isEmpty()) box.union(childBox);
+        }
+
+        if (box.isEmpty()) box.setFromObject(object);
+
+        center = new THREE.Vector3();
+        box.getCenter(center);
+        size = new THREE.Vector3();
+        box.getSize(size);
+        maxDim = Math.max(size.x, size.y, size.z);
+        if (maxDim === 0) maxDim = 1;
+        console.log('模型尺寸:', size.x.toFixed(2), 'x', size.y.toFixed(2), 'x', size.z.toFixed(2), '最大维度:', maxDim.toFixed(2));
+      } catch (e1) {
+        showError('步骤1-包围盒失败: ' + e1.message + '\n' + e1.stack);
+        console.error(e1);
+        return;
+      }
+
+      // 第三步：替换材质 + 描边
+      try {
+        setStatus('替换材质...');
+        var outlineThick = maxDim * 0.003;
+        outlineThick = Math.max(0.005, Math.min(2.0, outlineThick));
+
+        // 先收集所有 Mesh
+        var meshes = [];
+        object.traverse(function (child) {
+          if (child.isMesh) meshes.push(child);
+        });
+
+        // OBJ 没有法线数据，需要手动计算
+        for (var i = 0; i < meshes.length; i++) {
+          var child = meshes[i];
+          meshCount++;
+
+          // 计算法线（OBJ 文件没有 vn 数据）
+          if (child.geometry && !child.geometry.attributes.normal) {
+            child.geometry.computeVertexNormals();
+            console.log('[mesh ' + i + '] 计算了顶点法线');
+          }
+
+          var color = colorPool[colorIndex % colorPool.length];
+          colorIndex++;
+
+          child.material = createToonMaterial(color);
+          child.castShadow = true;
+          child.receiveShadow = true;
+
+          if (child.geometry) {
+            var outlineMesh = new THREE.Mesh(
+              child.geometry,
+              createOutlineMaterial(outlineThick)
+            );
+            outlineMesh.castShadow = false;
+            outlineMesh.receiveShadow = false;
+            child.add(outlineMesh);
+          }
+        }
+        console.log('材质替换完成, meshCount:', meshCount);
+      } catch (e2) {
+        showError('步骤2-材质替换失败: ' + e2.message + '\n' + e2.stack);
+        console.error(e2);
+        return;
+      }
+
+      // 第四步：设置场景
+      try {
+        setStatus('设置场景...');
+        object.position.sub(center);
+        object.position.y += size.y / 2;
+        scene.add(object);
+
+        var dist = maxDim * 2.0;
+        camera.position.set(dist * 0.8, dist * 0.6, dist * 0.8);
+        camera.lookAt(0, size.y * 0.35, 0);
+        camera.far = maxDim * 20;
+        camera.updateProjectionMatrix();
+        orbitTarget.set(0, size.y * 0.35, 0);
+        orbitDistance = camera.position.distanceTo(orbitTarget);
+
+        groundMesh.position.y = 0;
+        groundOutline.position.y = 0;
+
+        dirLight.position.set(maxDim, maxDim * 1.5, maxDim);
+        dirLight.shadow.camera.far = maxDim * 10;
+        dirLight.shadow.camera.left = -maxDim * 2;
+        dirLight.shadow.camera.right = maxDim * 2;
+        dirLight.shadow.camera.top = maxDim * 2;
+        dirLight.shadow.camera.bottom = -maxDim * 2;
+        dirLight.shadow.camera.updateProjectionMatrix();
+
+        scene.fog = new THREE.FogExp2(0xe8e0d4, 0.6 / maxDim);
+
+        // 诊断
+        console.log('=== 场景诊断 ===');
+        var lightCount = 0;
+        scene.traverse(function(obj) {
+          if (obj.isLight) {
+            lightCount++;
+            console.log('[灯光]', obj.type, 'intensity:', obj.intensity);
+          }
+        });
+        console.log('[灯光总数]', lightCount);
+
+        var toonCount = 0;
+        scene.traverse(function(obj) {
+          if (obj.isMesh && obj.material && obj.material.type === 'MeshToonMaterial') {
+            toonCount++;
+            if (toonCount <= 5) console.log('[Toon材质]', '#' + obj.material.color.getHexString());
+          }
+        });
+        console.log('[Toon材质总数]', toonCount);
+        console.log('=== 诊断结束 ===');
+
+        document.getElementById('infoPanel').innerHTML =
+          'Meshes: ' + meshCount + '<br>' +
+          'Size: ' + size.x.toFixed(1) + ' × ' + size.y.toFixed(1) + ' × ' + size.z.toFixed(1);
+
+        hideLoading();
+        console.log('✅ 加载完成！');
+      } catch (e3) {
+        showError('步骤3-场景设置失败: ' + e3.message + '\n' + e3.stack);
+        console.error(e3);
+      }
+    };
+
+    xhr.send();
+
+    // 轨道控制
+    var orbitTarget = new THREE.Vector3(0, 1, 0);
+    var orbitTheta = Math.PI / 4;
+    var orbitPhi = Math.PI / 6;
+    var orbitDistance = 12;
+    var isDragging = false;
+    var lastMX = 0, lastMY = 0;
+
+    renderer.domElement.addEventListener('mousedown', function (e) {
+      isDragging = true; lastMX = e.clientX; lastMY = e.clientY;
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!isDragging) return;
+      orbitTheta -= (e.clientX - lastMX) * 0.005;
+      orbitPhi += (e.clientY - lastMY) * 0.005;
+      orbitPhi = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, orbitPhi));
+      lastMX = e.clientX; lastMY = e.clientY;
+    });
+    window.addEventListener('mouseup', function () { isDragging = false; });
+
+    renderer.domElement.addEventListener('wheel', function (e) {
+      orbitDistance += e.deltaY * 0.02 * (orbitDistance * 0.1);
+      orbitDistance = Math.max(2, Math.min(500, orbitDistance));
+    });
+
+    window.addEventListener('keydown', function (e) {
+      if (e.key === 'r' || e.key === 'R') {
+        orbitTheta = Math.PI / 4; orbitPhi = Math.PI / 6; orbitDistance = 12;
+      }
+    });
+
+    // 动画
+    var clock = new THREE.Clock();
+    var autoRotate = true;
+
+    renderer.domElement.addEventListener('mousedown', function () { autoRotate = false; });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      var dt = clock.getDelta();
+
+      if (autoRotate) orbitTheta += dt * 0.15;
+
+      camera.position.x = orbitTarget.x + orbitDistance * Math.cos(orbitPhi) * Math.sin(orbitTheta);
+      camera.position.y = orbitTarget.y + orbitDistance * Math.sin(orbitPhi);
+      camera.position.z = orbitTarget.z + orbitDistance * Math.cos(orbitPhi) * Math.cos(orbitTheta);
+      camera.lookAt(orbitTarget);
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', function () {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+  })();
+  </script>
+</body>
+</html>

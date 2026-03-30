@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>三渲二 · 多模型预览</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #e8e0d4;
+      overflow: hidden;
+      height: 100vh;
+      font-family: 'Helvetica Neue', 'PingFang SC', sans-serif;
+    }
+    canvas { display: block; }
+    .loading {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: #e8e0d4;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 100; transition: opacity 1.2s ease;
+    }
+    .loading.fade { opacity: 0; pointer-events: none; }
+    .loading h1 { font-size: 22px; color: #8a7e72; letter-spacing: 6px; margin-bottom: 20px; font-weight: 300; }
+    .loading-bar { width: 200px; height: 3px; background: rgba(138,126,114,0.2); border-radius: 2px; overflow: hidden; }
+    .loading-bar-inner { width: 0%; height: 100%; background: #c49070; border-radius: 2px; transition: width 0.3s ease; }
+    .loading p { margin-top: 15px; color: #b0a898; font-size: 11px; letter-spacing: 2px; max-width: 80%; text-align: center; }
+    .title-bar { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); color: #8a7e72; font-size: 13px; letter-spacing: 3px; opacity: 0.6; user-select: none; }
+    .hint { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); color: #8a7e72; font-size: 11px; letter-spacing: 1px; opacity: 0.5; user-select: none; background: rgba(138,126,114,0.08); padding: 8px 20px; border-radius: 20px; }
+    .hint kbd { display: inline-block; background: rgba(138,126,114,0.15); border-radius: 4px; padding: 1px 6px; font-family: inherit; font-size: 11px; margin: 0 2px; }
+    .info-panel { position: fixed; bottom: 70px; right: 24px; color: #8a7e72; font-size: 11px; letter-spacing: 1px; opacity: 0.5; user-select: none; text-align: right; line-height: 1.8; }
+    .model-switcher { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 50; }
+    .model-btn { padding: 6px 16px; background: rgba(138,126,114,0.15); border: 1px solid rgba(138,126,114,0.3); border-radius: 16px; color: #8a7e72; font-size: 12px; cursor: pointer; transition: all 0.3s; letter-spacing: 1px; font-family: inherit; }
+    .model-btn:hover { background: rgba(138,126,114,0.25); }
+    .model-btn.active { background: #c49070; color: #fff; border-color: #c49070; }
+  </style>
+</head>
+<body>
+  <div class="loading" id="loadScreen">
+    <h1>三渲二模型预览</h1>
+    <div class="loading-bar"><div class="loading-bar-inner" id="loadBar"></div></div>
+    <p id="loadStatus">正在加载...</p>
+  </div>
+  <div class="title-bar">Toon Render · Multi Models</div>
+  <div class="model-switcher" id="modelSwitcher" style="display:none;">
+    <button class="model-btn active" data-model="all">全部显示</button>
+    <button class="model-btn" data-model="model1">模型 1</button>
+    <button class="model-btn" data-model="model2">Big House</button>
+    <button class="model-btn" data-model="model3">Garden</button>
+  </div>
+  <div class="hint">拖拽旋转 · 滚轮缩放 · <kbd>R</kbd> 重置 · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> 切换模型</div>
+  <div class="info-panel" id="infoPanel"></div>
+
+  <script src="lib/three.min.js"></script>
+  <script src="lib/OBJLoader.js"></script>
+  <script src="lib/GLTFLoader.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    var loadBar = document.getElementById('loadBar');
+    var loadStatus = document.getElementById('loadStatus');
+    var loadScreen = document.getElementById('loadScreen');
+    function setProgress(pct) { loadBar.style.width = Math.min(pct, 100) + '%'; }
+    function setStatus(text) { loadStatus.textContent = text; }
+    function showError(msg) {
+      loadStatus.style.whiteSpace = 'pre-wrap';
+      loadStatus.style.fontSize = '10px';
+      loadStatus.style.maxWidth = '90%';
+      loadStatus.style.textAlign = 'left';
+      loadStatus.textContent = msg;
+      document.querySelector('.loading h1').style.color = '#c47070';
+      console.error(msg);
+    }
+
+    if (typeof THREE === 'undefined') { showError('Three.js 未加载'); return; }
+    if (typeof THREE.OBJLoader === 'undefined') { showError('OBJLoader 未加载'); return; }
+    if (typeof THREE.GLTFLoader === 'undefined') { showError('GLTFLoader 未加载'); return; }
+    setStatus('初始化场景...');
+    setProgress(5);
+
+    function hideLoading() {
+      setProgress(100);
+      document.getElementById('modelSwitcher').style.display = 'flex';
+      setTimeout(function () {
+        loadScreen.classList.add('fade');
+        setTimeout(function () { loadScreen.style.display = 'none'; }, 1500);
+      }, 400);
+    }
+
+    // ── 场景 ──
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe8e0d4);
+
+    var camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 5000);
+    camera.position.set(8, 6, 8);
+    camera.lookAt(0, 1, 0);
+
+    var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.NoToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    // ── 色板 ──
+    var warmPalette = [
+      0xc49070, 0xb0a090, 0xa08060, 0xc4907a, 0xd4a574,
+      0x9a8a70, 0x8a7060, 0xbaa888, 0xa89478, 0xc4a898,
+      0x907868, 0xb8b0a0, 0xd4b494, 0xc0a880, 0xa09070
+    ];
+    var coolPalette = [
+      0x7a9ab0, 0x8aaa9a, 0x6a8a7a, 0x9ab0c0, 0xa0b8c8,
+      0x7090a0, 0x88a0a8, 0x6a8090, 0x90a8b0, 0xb0c0c8,
+      0x8898a0, 0x7888a0, 0xa0b0b8, 0x6080a0, 0x5878a0
+    ];
+    // 花园绿色调色板
+    var gardenPalette = [
+      0x6a9a5a, 0x8aba7a, 0x5a8a4a, 0x7aaa6a, 0xa0c890,
+      0x90b878, 0x4a7a3a, 0x80a868, 0xb0d0a0, 0x60884a,
+      0xc4a870, 0x9a8a60, 0xd4b880, 0x70a058, 0x88c070
+    ];
+
+    // ── Toon 材质 ──
+    function createToonMaterial(color) {
+      return new THREE.MeshToonMaterial({ color: color });
+    }
+
+    function createOutlineMaterial(thickness, outlineColor) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uThick: { value: thickness || 0.02 },
+          uOutlineColor: { value: new THREE.Color(outlineColor || 0x1c1714) }
+        },
+        vertexShader: 'uniform float uThick;\nvoid main() {\n  vec3 p = position + normal * uThick;\n  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);\n}',
+        fragmentShader: 'uniform vec3 uOutlineColor;\nvoid main() {\n  gl_FragColor = vec4(uOutlineColor, 1.0);\n}',
+        side: THREE.BackSide
+      });
+    }
+
+    // ══════════════════════════════════════
+    // 几何连通性分析：拆分不连通组件
+    // ══════════════════════════════════════
+    function splitIntoComponents(geometry) {
+      var pos = geometry.attributes.position;
+      var vertCount = pos.count;
+      var indexArr = geometry.index ? geometry.index.array : null;
+
+      // Union-Find
+      var parent = new Int32Array(vertCount);
+      for (var i = 0; i < vertCount; i++) parent[i] = i;
+      function find(x) {
+        while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+        return x;
+      }
+      function unite(a, b) {
+        a = find(a); b = find(b);
+        if (a !== b) parent[b] = a;
+      }
+
+      // 合并相同位置的顶点
+      var posMap = {};
+      for (var i = 0; i < vertCount; i++) {
+        var key = pos.getX(i).toFixed(4) + ',' + pos.getY(i).toFixed(4) + ',' + pos.getZ(i).toFixed(4);
+        if (posMap[key] !== undefined) unite(i, posMap[key]);
+        else posMap[key] = i;
+      }
+
+      // 合并同一面的顶点
+      if (indexArr) {
+        for (var i = 0; i < indexArr.length; i += 3) {
+          unite(indexArr[i], indexArr[i + 1]);
+          unite(indexArr[i + 1], indexArr[i + 2]);
+        }
+      }
+
+      // 按根分组面
+      if (!indexArr) return null; // 非索引，无法拆分
+
+      var faceGroups = {};
+      for (var i = 0; i < indexArr.length; i += 3) {
+        var root = find(indexArr[i]);
+        if (!faceGroups[root]) faceGroups[root] = [];
+        faceGroups[root].push(indexArr[i], indexArr[i + 1], indexArr[i + 2]);
+      }
+
+      // 转为数组并按面数排序
+      var groups = [];
+      var keys = Object.keys(faceGroups);
+      for (var k = 0; k < keys.length; k++) {
+        groups.push(faceGroups[keys[k]]);
+      }
+      groups.sort(function (a, b) { return b.length - a.length; });
+
+      // 过滤掉太小的碎片（少于 9 个索引 = 3 个三角面）
+      groups = groups.filter(function (g) { return g.length >= 9; });
+
+      // 如果组件太多，把小碎片合并到最后一组
+      var MAX = 15;
+      if (groups.length > MAX) {
+        var main = groups.slice(0, MAX - 1);
+        var rest = [];
+        for (var i = MAX - 1; i < groups.length; i++) {
+          rest = rest.concat(groups[i]);
+        }
+        main.push(rest);
+        groups = main;
+      }
+
+      console.log('[连通性] 顶点:', vertCount, '组件:', groups.length);
+      return groups;
+    }
+
+    // ── 处理单个模型：拆分组件 + 着色 + 描边 ──
+    function processModel(object, palette, outlineThick) {
+      var result = new THREE.Group();
+      var meshes = [];
+      object.traverse(function (c) { if (c.isMesh) meshes.push(c); });
+
+      var colorIdx = 0;
+      var compTotal = 0;
+
+      for (var m = 0; m < meshes.length; m++) {
+        var geo = meshes[m].geometry;
+        if (!geo.attributes.normal) geo.computeVertexNormals();
+
+        var groups = geo.index ? splitIntoComponents(geo) : null;
+
+        if (!groups || groups.length <= 1) {
+          // 单组件，整体着色
+          var col = palette[colorIdx++ % palette.length];
+          var tm = new THREE.Mesh(geo, createToonMaterial(col));
+          tm.castShadow = true; tm.receiveShadow = true;
+          result.add(tm);
+          result.add(new THREE.Mesh(geo, createOutlineMaterial(outlineThick)));
+          compTotal++;
+        } else {
+          // 多组件，每个组件独立着色
+          for (var g = 0; g < groups.length; g++) {
+            var subGeo = geo.clone();
+            subGeo.setIndex(groups[g]);
+            subGeo.computeVertexNormals();
+
+            var col = palette[colorIdx++ % palette.length];
+            var tm = new THREE.Mesh(subGeo, createToonMaterial(col));
+            tm.castShadow = true; tm.receiveShadow = true;
+            result.add(tm);
+            result.add(new THREE.Mesh(subGeo, createOutlineMaterial(outlineThick)));
+            compTotal++;
+          }
+        }
+      }
+
+      console.log('[模型处理] 子组件总数:', compTotal);
+      return result;
+    }
+
+    // ── 地面 ──
+    var groundGeo = new THREE.CircleGeometry(80, 64);
+    groundGeo.rotateX(-Math.PI / 2);
+    var groundMesh = new THREE.Mesh(groundGeo, createToonMaterial(0xc4b8a0));
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+    scene.add(new THREE.Mesh(groundGeo, createOutlineMaterial(0.03, 0x8a7e60)));
+
+    // ── 光照 ──
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+
+    var dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    dirLight.position.set(8, 12, 8);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.near = 0.1;
+    dirLight.shadow.camera.far = 200;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
+    scene.add(dirLight);
+
+    var dirLight2 = new THREE.DirectionalLight(0xfff5e8, 0.8);
+    dirLight2.position.set(-8, 8, -8);
+    scene.add(dirLight2);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xc4b8a0, 0.8));
+
+    // ══════════════════════════════════════
+    // 加载模型
+    // ══════════════════════════════════════
+    var model1Group = null, model2Group = null, model3Group = null;
+    var loadedCount = 0;
+    var totalModels = 3;
+    var globalMaxDim = 1, globalSizeY = 1;
+
+    function loadOBJ(url, palette, callback) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'text';
+
+      xhr.onprogress = function (e) {
+        if (e.total > 0) {
+          setStatus('下载 ' + url + ' ' + Math.round(e.loaded / e.total * 100) + '%');
+        } else {
+          setStatus('下载 ' + url + '... ' + Math.round(e.loaded / 1024) + 'KB');
+        }
+      };
+      xhr.onerror = function () { showError('下载失败: ' + url); };
+
+      xhr.onload = function () {
+        if (xhr.status !== 200) { showError(url + ' HTTP ' + xhr.status); return; }
+
+        console.log('[' + url + '] 下载完成:', xhr.responseText.length, '字符');
+        setStatus('解析 ' + url + '...');
+
+        var object;
+        try {
+          object = new THREE.OBJLoader().parse(xhr.responseText);
+          console.log('[' + url + '] 解析成功, children:', object.children.length);
+        } catch (e) {
+          showError('解析失败 ' + url + ': ' + e.message);
+          return;
+        }
+
+        try {
+          var box = new THREE.Box3().setFromObject(object);
+          var center = new THREE.Vector3(); box.getCenter(center);
+          var size = new THREE.Vector3(); box.getSize(size);
+          var maxDim = Math.max(size.x, size.y, size.z) || 1;
+          console.log('[' + url + '] 尺寸:', size.x.toFixed(2), 'x', size.y.toFixed(2), 'x', size.z.toFixed(2));
+
+          var outlineThick = Math.max(0.003, Math.min(1.0, maxDim * 0.003));
+
+          setStatus('组件分析 ' + url + '...');
+          var group = processModel(object, palette, outlineThick);
+          group.position.sub(center);
+          group.position.y += size.y / 2;
+
+          callback(group, size, maxDim);
+        } catch (e) {
+          showError('处理失败 ' + url + ': ' + e.message + '\n' + e.stack);
+          console.error(e);
+        }
+      };
+      xhr.send();
+    }
+
+    function loadGLB(url, palette, callback) {
+      setStatus('加载 ' + url + '...');
+      var loader = new THREE.GLTFLoader();
+
+      // 手动 XHR 下载 GLB，再用 parse 解析（避免回调异常被吞）
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'arraybuffer';
+
+      xhr.onprogress = function (e) {
+        if (e.total > 0) {
+          setStatus('下载 ' + url + ' ' + Math.round(e.loaded / e.total * 100) + '%');
+        } else {
+          setStatus('下载 ' + url + '... ' + Math.round(e.loaded / 1024) + 'KB');
+        }
+      };
+      xhr.onerror = function () { showError('下载失败: ' + url); };
+
+      xhr.onload = function () {
+        if (xhr.status !== 200) { showError(url + ' HTTP ' + xhr.status); return; }
+
+        console.log('[' + url + '] 下载完成:', xhr.response.byteLength, 'bytes');
+        setStatus('解析 ' + url + '...');
+
+        try {
+          loader.parse(xhr.response, '', function (gltf) {
+            try {
+              var object = gltf.scene;
+              console.log('[' + url + '] GLTF 解析成功, children:', object.children.length);
+
+              // 统计原始 mesh 信息
+              var origMeshCount = 0;
+              object.traverse(function (c) { if (c.isMesh) origMeshCount++; });
+              console.log('[' + url + '] 原始 Mesh 数:', origMeshCount);
+
+              var box = new THREE.Box3().setFromObject(object);
+              var center = new THREE.Vector3(); box.getCenter(center);
+              var size = new THREE.Vector3(); box.getSize(size);
+              var maxDim = Math.max(size.x, size.y, size.z) || 1;
+              console.log('[' + url + '] 尺寸:', size.x.toFixed(2), 'x', size.y.toFixed(2), 'x', size.z.toFixed(2));
+
+              var outlineThick = Math.max(0.003, Math.min(1.0, maxDim * 0.003));
+
+              setStatus('组件分析 ' + url + '...');
+
+              // GLB 通常已有多个 mesh/组件，直接利用原始结构
+              var result = new THREE.Group();
+              var meshes = [];
+              object.traverse(function (c) { if (c.isMesh) meshes.push(c); });
+
+              var colorIdx = 0;
+              for (var i = 0; i < meshes.length; i++) {
+                var mesh = meshes[i];
+                var geo = mesh.geometry;
+                if (!geo.attributes.normal) geo.computeVertexNormals();
+
+                // 保留原始变换
+                mesh.updateWorldMatrix(true, false);
+                var worldMatrix = mesh.matrixWorld.clone();
+
+                var col = palette[colorIdx++ % palette.length];
+                var toonMesh = new THREE.Mesh(geo, createToonMaterial(col));
+                toonMesh.applyMatrix4(worldMatrix);
+                toonMesh.castShadow = true;
+                toonMesh.receiveShadow = true;
+                result.add(toonMesh);
+
+                var outline = new THREE.Mesh(geo, createOutlineMaterial(outlineThick));
+                outline.applyMatrix4(worldMatrix);
+                result.add(outline);
+              }
+
+              console.log('[' + url + '] Toon 处理完成, 组件:', meshes.length);
+
+              result.position.sub(center);
+              result.position.y += size.y / 2;
+
+              callback(result, size, maxDim);
+            } catch (e) {
+              showError('GLB 处理失败: ' + e.message + '\n' + e.stack);
+              console.error(e);
+            }
+          }, function (error) {
+            showError('GLB 解析失败: ' + (error && error.message ? error.message : '未知错误'));
+          });
+        } catch (e) {
+          showError('GLB parse 调用失败: ' + e.message);
+          console.error(e);
+        }
+      };
+      xhr.send();
+    }
+
+    setProgress(5);
+
+    function onModelLoaded(group, size, maxDim) {
+      if (maxDim > globalMaxDim) globalMaxDim = maxDim;
+      if (size.y > globalSizeY) globalSizeY = size.y;
+      loadedCount++;
+      setProgress(5 + loadedCount / totalModels * 90);
+      if (loadedCount === totalModels) finishSetup();
+    }
+
+    loadOBJ('model.obj', warmPalette, function (group, size, maxDim) {
+      model1Group = group;
+      scene.add(model1Group);
+      console.log('✅ model.obj OK');
+      onModelLoaded(group, size, maxDim);
+    });
+
+    loadOBJ('bighouse.obj', coolPalette, function (group, size, maxDim) {
+      model2Group = group;
+      scene.add(model2Group);
+      console.log('✅ bighouse.obj OK');
+      onModelLoaded(group, size, maxDim);
+    });
+
+    loadGLB('garden.glb', gardenPalette, function (group, size, maxDim) {
+      model3Group = group;
+      scene.add(model3Group);
+      console.log('✅ garden.glb OK');
+      onModelLoaded(group, size, maxDim);
+    });
+
+    function finishSetup() {
+      // 三个模型并排摆放
+      var spacing = globalMaxDim * 1.4;
+      if (model1Group) model1Group.position.x -= spacing;
+      // model2 留在中间
+      if (model3Group) model3Group.position.x += spacing;
+
+      // 相机
+      var dist = globalMaxDim * 4.0;
+      camera.position.set(dist * 0.8, dist * 0.5, dist * 0.8);
+      camera.lookAt(0, globalSizeY * 0.3, 0);
+      camera.far = globalMaxDim * 40;
+      camera.updateProjectionMatrix();
+      orbitTarget.set(0, globalSizeY * 0.3, 0);
+      orbitDistance = camera.position.distanceTo(orbitTarget);
+
+      // 灯光范围
+      dirLight.position.set(globalMaxDim * 1.5, globalMaxDim * 2, globalMaxDim * 1.5);
+      dirLight.shadow.camera.far = globalMaxDim * 15;
+      var s = globalMaxDim * 3;
+      dirLight.shadow.camera.left = -s;
+      dirLight.shadow.camera.right = s;
+      dirLight.shadow.camera.top = s;
+      dirLight.shadow.camera.bottom = -s;
+      dirLight.shadow.camera.updateProjectionMatrix();
+
+      scene.fog = new THREE.FogExp2(0xe8e0d4, 0.3 / globalMaxDim);
+
+      // 统计
+      var mc = 0;
+      scene.traverse(function (o) { if (o.isMesh) mc++; });
+      document.getElementById('infoPanel').innerHTML =
+        'Total Meshes: ' + mc + '<br>暖色 · 冷色 · 绿色';
+
+      hideLoading();
+      console.log('✅ 全部加载完成！');
+    }
+
+    // ── 模型切换 ──
+    function switchModel(mode) {
+      var btns = document.querySelectorAll('.model-btn');
+      for (var j = 0; j < btns.length; j++) {
+        if (btns[j].getAttribute('data-model') === mode) btns[j].classList.add('active');
+        else btns[j].classList.remove('active');
+      }
+      if (model1Group) model1Group.visible = (mode === 'all' || mode === 'model1');
+      if (model2Group) model2Group.visible = (mode === 'all' || mode === 'model2');
+      if (model3Group) model3Group.visible = (mode === 'all' || mode === 'model3');
+    }
+
+    var btns = document.querySelectorAll('.model-btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener('click', function () {
+        switchModel(this.getAttribute('data-model'));
+      });
+    }
+
+    window.addEventListener('keydown', function (e) {
+      if (e.key === '1') switchModel('model1');
+      if (e.key === '2') switchModel('model2');
+      if (e.key === '3') switchModel('model3');
+      if (e.key === '4') switchModel('all');
+      if (e.key === 'r' || e.key === 'R') {
+        orbitTheta = Math.PI / 4; orbitPhi = Math.PI / 6;
+        orbitDistance = globalMaxDim * 4.0 * 1.14;
+      }
+    });
+
+    // ── 轨道控制 ──
+    var orbitTarget = new THREE.Vector3(0, 1, 0);
+    var orbitTheta = Math.PI / 4, orbitPhi = Math.PI / 6, orbitDistance = 12;
+    var isDragging = false, lastMX = 0, lastMY = 0;
+
+    renderer.domElement.addEventListener('mousedown', function (e) { isDragging = true; lastMX = e.clientX; lastMY = e.clientY; autoRotate = false; });
+    window.addEventListener('mousemove', function (e) {
+      if (!isDragging) return;
+      orbitTheta -= (e.clientX - lastMX) * 0.005;
+      orbitPhi += (e.clientY - lastMY) * 0.005;
+      orbitPhi = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, orbitPhi));
+      lastMX = e.clientX; lastMY = e.clientY;
+    });
+    window.addEventListener('mouseup', function () { isDragging = false; });
+    renderer.domElement.addEventListener('wheel', function (e) {
+      orbitDistance += e.deltaY * 0.02 * (orbitDistance * 0.1);
+      orbitDistance = Math.max(1, Math.min(500, orbitDistance));
+    });
+    // 触摸
+    renderer.domElement.addEventListener('touchstart', function (e) {
+      if (e.touches.length === 1) { isDragging = true; lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY; autoRotate = false; }
+    });
+    renderer.domElement.addEventListener('touchmove', function (e) {
+      if (!isDragging || e.touches.length !== 1) return;
+      orbitTheta -= (e.touches[0].clientX - lastMX) * 0.005;
+      orbitPhi += (e.touches[0].clientY - lastMY) * 0.005;
+      orbitPhi = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, orbitPhi));
+      lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY;
+    });
+    renderer.domElement.addEventListener('touchend', function () { isDragging = false; });
+
+    // ── 动画 ──
+    var clock = new THREE.Clock();
+    var autoRotate = true;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      var dt = clock.getDelta();
+      if (autoRotate) orbitTheta += dt * 0.12;
+      camera.position.x = orbitTarget.x + orbitDistance * Math.cos(orbitPhi) * Math.sin(orbitTheta);
+      camera.position.y = orbitTarget.y + orbitDistance * Math.sin(orbitPhi);
+      camera.position.z = orbitTarget.z + orbitDistance * Math.cos(orbitPhi) * Math.cos(orbitTheta);
+      camera.lookAt(orbitTarget);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', function () {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+  })();
+  </script>
+</body>
+</html>

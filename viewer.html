@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>三渲二 · 蒸汽朋克磨坊</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #e8e0d4;
+      overflow: hidden;
+      height: 100vh;
+      font-family: 'Helvetica Neue', 'PingFang SC', sans-serif;
+    }
+    canvas { display: block; }
+
+    .loading {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #e8e0d4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      transition: opacity 1.2s ease;
+    }
+    .loading.fade { opacity: 0; pointer-events: none; }
+    .loading h1 {
+      font-size: 22px;
+      color: #8a7e72;
+      letter-spacing: 6px;
+      margin-bottom: 20px;
+      font-weight: 300;
+    }
+    .loading-bar {
+      width: 200px; height: 3px;
+      background: rgba(138,126,114,0.2);
+      border-radius: 2px; overflow: hidden;
+    }
+    .loading-bar-inner {
+      width: 0%; height: 100%;
+      background: #c49070;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .loading p {
+      margin-top: 15px;
+      color: #b0a898;
+      font-size: 11px;
+      letter-spacing: 2px;
+      max-width: 80%;
+      text-align: center;
+      word-break: break-all;
+    }
+
+    .title-bar {
+      position: fixed; top: 24px; left: 50%;
+      transform: translateX(-50%);
+      color: #8a7e72; font-size: 13px;
+      letter-spacing: 3px; opacity: 0.6;
+      user-select: none; text-transform: uppercase;
+    }
+
+    .hint {
+      position: fixed; bottom: 28px; left: 50%;
+      transform: translateX(-50%);
+      color: #8a7e72; font-size: 11px;
+      letter-spacing: 1px; opacity: 0.5;
+      user-select: none;
+      background: rgba(138,126,114,0.08);
+      padding: 8px 20px; border-radius: 20px;
+    }
+    .hint kbd {
+      display: inline-block;
+      background: rgba(138,126,114,0.15);
+      border-radius: 4px; padding: 1px 6px;
+      font-family: inherit; font-size: 11px; margin: 0 2px;
+    }
+
+    .info-panel {
+      position: fixed; bottom: 70px; right: 24px;
+      color: #8a7e72; font-size: 11px;
+      letter-spacing: 1px; opacity: 0.5;
+      user-select: none; text-align: right; line-height: 1.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="loading" id="loadScreen">
+    <h1>蒸汽朋克磨坊</h1>
+    <div class="loading-bar"><div class="loading-bar-inner" id="loadBar"></div></div>
+    <p id="loadStatus">正在加载...</p>
+  </div>
+
+  <div class="title-bar">Steampunk Mill · Toon Render</div>
+  <div class="hint">鼠标拖拽旋转 · 滚轮缩放 · <kbd>R</kbd> 重置视角</div>
+  <div class="info-panel" id="infoPanel"></div>
+
+  <!-- 全部使用本地脚本，不依赖 CDN -->
+  <script src="lib/three.min.js"></script>
+  <script src="lib/fflate.js"></script>
+  <script src="lib/NURBSUtils.js"></script>
+  <script src="lib/NURBSCurve.js"></script>
+  <script src="lib/FBXLoader.js"></script>
+
+  <script>
+  (function () {
+    'use strict';
+
+    var loadBar = document.getElementById('loadBar');
+    var loadStatus = document.getElementById('loadStatus');
+    var loadScreen = document.getElementById('loadScreen');
+
+    function setProgress(pct) { loadBar.style.width = Math.min(pct, 100) + '%'; }
+    function setStatus(text) { loadStatus.textContent = text; }
+    function showError(msg) {
+      loadStatus.style.whiteSpace = 'pre-wrap';
+      loadStatus.style.fontSize = '10px';
+      loadStatus.style.maxWidth = '90%';
+      loadStatus.style.textAlign = 'left';
+      loadStatus.textContent = msg;
+      document.querySelector('.loading h1').style.color = '#c47070';
+      console.error(msg);
+    }
+
+    // ── 运行时检查 ──
+    if (typeof THREE === 'undefined') { showError('Three.js 未加载'); return; }
+    if (typeof THREE.FBXLoader === 'undefined') { showError('FBXLoader 未加载'); return; }
+    if (typeof fflate === 'undefined') { showError('fflate 未加载'); return; }
+
+    setStatus('脚本就绪，初始化场景...');
+    setProgress(5);
+
+    function hideLoading() {
+      setProgress(100);
+      setTimeout(function () {
+        loadScreen.classList.add('fade');
+        setTimeout(function () { loadScreen.style.display = 'none'; }, 1500);
+      }, 400);
+    }
+
+    // ══════════════════════════════════════════════
+    // 场景
+    // ══════════════════════════════════════════════
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe8e0d4);
+    scene.fog = new THREE.FogExp2(0xe8e0d4, 0.015);
+
+    var camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 5000);
+    camera.position.set(8, 6, 8);
+    camera.lookAt(0, 1, 0);
+
+    var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // 关闭 toneMapping — ACESFilmic 会严重压暗 ToonMaterial 的色阶效果
+    renderer.toneMapping = THREE.NoToneMapping;
+    // sRGBEncoding 保留，让颜色正常显示
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    document.body.appendChild(renderer.domElement);
+
+    // ══════════════════════════════════════════════
+    // 三渲二材质（使用 Three.js 内置 Toon 材质）
+    // ══════════════════════════════════════════════
+
+    // 创建 3 级色阶渐变纹理（三渲二核心）
+    // r137 中 LuminanceFormat 已移除，必须用 RedFormat + 单通道
+    var gradColors = new Uint8Array(3);
+    gradColors[0] = 100;  // 暗部
+    gradColors[1] = 180;  // 中间
+    gradColors[2] = 255;  // 亮部
+
+    // 先试 RedFormat，不存在就用 LuminanceFormat
+    var texFormat = (typeof THREE.RedFormat !== 'undefined') ? THREE.RedFormat : THREE.LuminanceFormat;
+    console.log('[诊断] 使用纹理格式:', texFormat === THREE.RedFormat ? 'RedFormat' : 'LuminanceFormat');
+
+    var gradientMap = new THREE.DataTexture(gradColors, 3, 1, texFormat);
+    gradientMap.minFilter = THREE.NearestFilter;
+    gradientMap.magFilter = THREE.NearestFilter;
+    gradientMap.generateMipmaps = false;
+    gradientMap.needsUpdate = true;
+
+    // 先用一个简单测试：不用 gradientMap，看 MeshToonMaterial 在纯色模式下能否正常显示
+    // 如果纯色能看到颜色，则问题在 gradientMap
+    function createToonMaterial(color) {
+      var mat = new THREE.MeshToonMaterial({
+        color: color
+        // 先不设 gradientMap，用默认 2 级色阶
+      });
+      console.log('[材质] 创建 ToonMaterial, color:', typeof color === 'number' ? '0x' + color.toString(16) : color);
+      return mat;
+    }
+
+    function createOutlineMaterial(thickness, outlineColor) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uThick: { value: thickness || 0.025 },
+          uOutlineColor: { value: new THREE.Color(outlineColor || 0x1c1714) }
+        },
+        vertexShader: [
+          'uniform float uThick;',
+          'void main() {',
+          '  vec3 p = position + normal * uThick;',
+          '  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);',
+          '}'
+        ].join('\n'),
+        fragmentShader: [
+          'uniform vec3 uOutlineColor;',
+          'void main() {',
+          '  gl_FragColor = vec4(uOutlineColor, 1.0);',
+          '}'
+        ].join('\n'),
+        side: THREE.BackSide
+      });
+    }
+
+    // ── 色彩方案 ──
+    var PALETTE = {
+      metal: 0xb0a090, copper: 0xc49070, wood: 0xa08060,
+      brick: 0xc4907a, stone: 0xb8b0a0, dark: 0x605040,
+      accent: 0xd4a574, gear: 0x9a8a70, roof: 0x8a7060,
+      ground: 0xc4b8a0, fallback: 0xb8a890
+    };
+
+    var colorPool = [
+      0xc49070, 0xb0a090, 0xa08060, 0xc4907a, 0xb8b0a0, 0xd4a574,
+      0x9a8a70, 0x8a7060, 0xbaa888, 0xa89478, 0xc4a898, 0x907868
+    ];
+    var colorIndex = 0;
+
+    function guessToonColor(material) {
+      if (!material) return PALETTE.fallback;
+      try {
+        var name = (material.name || '').toLowerCase();
+        if (name.match(/metal|steel|iron/)) return PALETTE.metal;
+        if (name.match(/copper|bronze|brass/)) return PALETTE.copper;
+        if (name.match(/wood|timber|plank/)) return PALETTE.wood;
+        if (name.match(/brick|clay/)) return PALETTE.brick;
+        if (name.match(/stone|rock|marble/)) return PALETTE.stone;
+        if (name.match(/dark|shadow/)) return PALETTE.dark;
+        if (name.match(/gear|cog|wheel/)) return PALETTE.gear;
+        if (name.match(/roof|top/)) return PALETTE.roof;
+        if (name.match(/ground|floor|base/)) return PALETTE.ground;
+
+        var origColor = material.color;
+        if (origColor && origColor.isColor && typeof origColor.getHSL === 'function') {
+          var hsl = {};
+          origColor.getHSL(hsl);
+          hsl.s = Math.min(hsl.s * 0.6 + 0.1, 0.4);
+          hsl.l = Math.min(Math.max(hsl.l, 0.35), 0.75);
+          hsl.h = hsl.h * 0.7 + 0.08 * 0.3;
+          var c = new THREE.Color();
+          c.setHSL(hsl.h, hsl.s, hsl.l);
+          return c;
+        }
+      } catch (e) {
+        console.warn('guessToonColor error:', e.message, 'material:', material);
+      }
+      return PALETTE.fallback;
+    }
+
+    // ── 地面 ──
+    var groundGeo = new THREE.CircleGeometry(80, 64);
+    groundGeo.rotateX(-Math.PI / 2);
+    var groundMesh = new THREE.Mesh(groundGeo, createToonMaterial(PALETTE.ground));
+    groundMesh.position.y = -0.01;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+
+    var groundOutline = new THREE.Mesh(groundGeo, createOutlineMaterial(0.03, 0x8a7e60));
+    groundOutline.position.y = -0.01;
+    scene.add(groundOutline);
+
+    // ── 光照（大幅增强，确保 ToonMaterial 可见）──
+    var ambLight = new THREE.AmbientLight(0xffffff, 1.0);
+    scene.add(ambLight);
+
+    var dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    dirLight.position.set(8, 12, 8);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.near = 0.1;
+    dirLight.shadow.camera.far = 200;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
+    scene.add(dirLight);
+
+    // 反方向补光
+    var dirLight2 = new THREE.DirectionalLight(0xfff5e8, 0.8);
+    dirLight2.position.set(-8, 8, -8);
+    scene.add(dirLight2);
+
+    // 半球光
+    var hemiLight = new THREE.HemisphereLight(0xffffff, 0xc4b8a0, 0.8);
+    scene.add(hemiLight);
+
+    console.log('[诊断] 灯光已添加: AmbientLight(1.0), DirectionalLight(1.5), DirLight2(0.8), HemisphereLight(0.8)');
+
+    // ══════════════════════════════════════════════
+    // 加载 FBX
+    // ══════════════════════════════════════════════
+    setProgress(10);
+    setStatus('正在加载 FBX 模型...');
+
+    // 用 XMLHttpRequest 手动加载 FBX ArrayBuffer，再用 FBXLoader.parse() 解析
+    // 这样可以完全控制错误处理，避免 FBXLoader.load 内部 try-catch 吞掉成功回调里的异常
+    setStatus('正在下载 FBX 模型...');
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', 'steampunk_mill.fbx', true);
+    xhr.responseType = 'arraybuffer';
+
+    xhr.onprogress = function (e) {
+      if (e.total > 0) {
+        var pct = Math.round(e.loaded / e.total * 100);
+        setProgress(10 + pct * 0.7);
+        setStatus('下载模型 ' + pct + '% (' + Math.round(e.loaded/1024) + 'KB)');
+      } else {
+        setStatus('下载模型中... ' + Math.round(e.loaded/1024) + 'KB');
+      }
+    };
+
+    xhr.onerror = function () {
+      showError('FBX 下载失败（网络错误）');
+    };
+
+    xhr.onload = function () {
+      if (xhr.status !== 200) {
+        showError('FBX 下载失败: HTTP ' + xhr.status);
+        return;
+      }
+
+      setProgress(80);
+      setStatus('模型已下载，解析中...');
+      console.log('FBX 下载完成, 大小:', xhr.response.byteLength, 'bytes');
+
+      var object;
+      try {
+        var loader = new THREE.FBXLoader();
+        object = loader.parse(xhr.response, '');
+        console.log('FBX 解析成功, children:', object.children.length);
+      } catch (parseErr) {
+        showError('FBX 解析失败: ' + parseErr.message);
+        console.error('FBX 解析失败:', parseErr);
+        return;
+      }
+
+      try {
+        setStatus('计算包围盒...');
+        var meshCount = 0;
+        var box = new THREE.Box3();
+
+        // 收集所有 mesh 计算包围盒
+        var allMeshes = [];
+        object.traverse(function (child) {
+          if (child.isMesh) allMeshes.push(child);
+        });
+
+        for (var m = 0; m < allMeshes.length; m++) {
+          allMeshes[m].updateWorldMatrix(true, false);
+          var childBox = new THREE.Box3().setFromObject(allMeshes[m]);
+          if (!childBox.isEmpty()) box.union(childBox);
+        }
+
+        if (box.isEmpty()) box.setFromObject(object);
+
+        var center = new THREE.Vector3();
+        box.getCenter(center);
+        var size = new THREE.Vector3();
+        box.getSize(size);
+        var maxDim = Math.max(size.x, size.y, size.z);
+        if (maxDim === 0) maxDim = 1;
+        console.log('模型尺寸:', size.x.toFixed(2), 'x', size.y.toFixed(2), 'x', size.z.toFixed(2));
+        setStatus('包围盒OK, 尺寸: ' + maxDim.toFixed(1));
+      } catch (e1) {
+        showError('步骤1-包围盒失败: ' + e1.message + '\n' + e1.stack);
+        console.error(e1);
+        return;
+      }
+
+      try {
+        setStatus('替换材质...');
+        var outlineThick = maxDim * 0.003;
+        outlineThick = Math.max(0.005, Math.min(2.0, outlineThick));
+
+        // 先收集所有 Mesh，避免在 traverse 中 add 子对象导致无限递归
+        var meshes = [];
+        object.traverse(function (child) {
+          if (child.isMesh) meshes.push(child);
+        });
+
+        for (var i = 0; i < meshes.length; i++) {
+          var child = meshes[i];
+          meshCount++;
+          var origMat = child.material;
+          var toonColor;
+
+          if (Array.isArray(origMat)) {
+            toonColor = guessToonColor(origMat[0]);
+          } else {
+            toonColor = guessToonColor(origMat);
+          }
+
+          if (typeof toonColor === 'number' && toonColor === PALETTE.fallback) {
+            toonColor = colorPool[colorIndex % colorPool.length];
+            colorIndex++;
+          }
+
+          child.material = createToonMaterial(toonColor);
+          child.castShadow = true;
+          child.receiveShadow = true;
+          toonMeshList.push(child);
+
+          if (child.geometry) {
+            var outlineMesh = new THREE.Mesh(
+              child.geometry,
+              createOutlineMaterial(outlineThick)
+            );
+            outlineMesh.castShadow = false;
+            outlineMesh.receiveShadow = false;
+            child.add(outlineMesh);
+          }
+        }
+        console.log('材质替换完成, meshCount:', meshCount);
+      } catch (e2) {
+        showError('步骤2-材质替换失败: ' + e2.message + '\n' + e2.stack);
+        console.error(e2);
+        return;
+      }
+
+      try {
+        setStatus('设置场景...');
+        // 居中
+        object.position.sub(center);
+        object.position.y += size.y / 2;
+        scene.add(object);
+
+        // 相机
+        var dist = maxDim * 2.0;
+        camera.position.set(dist * 0.8, dist * 0.6, dist * 0.8);
+        camera.lookAt(0, size.y * 0.35, 0);
+        camera.far = maxDim * 20;
+        camera.updateProjectionMatrix();
+        orbitTarget.set(0, size.y * 0.35, 0);
+        orbitDistance = camera.position.distanceTo(orbitTarget);
+
+        // 地面
+        groundMesh.position.y = 0;
+        groundOutline.position.y = 0;
+
+        // 光照范围
+        dirLight.position.set(maxDim, maxDim * 1.5, maxDim);
+        dirLight.shadow.camera.far = maxDim * 10;
+        dirLight.shadow.camera.left = -maxDim * 2;
+        dirLight.shadow.camera.right = maxDim * 2;
+        dirLight.shadow.camera.top = maxDim * 2;
+        dirLight.shadow.camera.bottom = -maxDim * 2;
+        dirLight.shadow.camera.updateProjectionMatrix();
+
+        // 雾效
+        scene.fog = new THREE.FogExp2(0xe8e0d4, 0.6 / maxDim);
+
+        document.getElementById('infoPanel').innerHTML =
+          'Meshes: ' + meshCount + '<br>' +
+          'Size: ' + size.x.toFixed(1) + ' × ' + size.y.toFixed(1) + ' × ' + size.z.toFixed(1);
+
+        // ── 诊断：输出场景中所有灯光和材质信息 ──
+        console.log('=== 场景诊断 ===');
+        var lightCount = 0;
+        scene.traverse(function(obj) {
+          if (obj.isLight) {
+            lightCount++;
+            console.log('[灯光]', obj.type, 'intensity:', obj.intensity, 'color:', obj.color ? '#' + obj.color.getHexString() : 'N/A');
+          }
+        });
+        console.log('[灯光总数]', lightCount);
+
+        var toonCount = 0, otherCount = 0;
+        scene.traverse(function(obj) {
+          if (obj.isMesh && obj.material) {
+            var mat = obj.material;
+            if (mat.type === 'MeshToonMaterial') {
+              toonCount++;
+              if (toonCount <= 5) console.log('[Toon材质]', mat.color ? '#' + mat.color.getHexString() : 'no color');
+            } else {
+              otherCount++;
+              if (otherCount <= 5) console.log('[其他材质]', mat.type);
+            }
+          }
+        });
+        console.log('[材质统计] ToonMaterial:', toonCount, '其他:', otherCount);
+        console.log('=== 诊断结束 ===');
+
+        hideLoading();
+      } catch (e3) {
+        showError('步骤3-场景设置失败: ' + e3.message + '\n' + e3.stack);
+        console.error(e3);
+      }
+    };
+
+    xhr.send();
+
+    // ══════════════════════════════════════════════
+    // 轨道控制
+    // ══════════════════════════════════════════════
+    var orbitTarget = new THREE.Vector3(0, 1, 0);
+    var orbitTheta = Math.PI / 4;
+    var orbitPhi = Math.PI / 6;
+    var orbitDistance = 12;
+    var isDragging = false;
+    var lastMX = 0, lastMY = 0;
+
+    renderer.domElement.addEventListener('mousedown', function (e) {
+      isDragging = true; lastMX = e.clientX; lastMY = e.clientY;
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!isDragging) return;
+      orbitTheta -= (e.clientX - lastMX) * 0.005;
+      orbitPhi += (e.clientY - lastMY) * 0.005;
+      orbitPhi = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, orbitPhi));
+      lastMX = e.clientX; lastMY = e.clientY;
+    });
+    window.addEventListener('mouseup', function () { isDragging = false; });
+
+    renderer.domElement.addEventListener('wheel', function (e) {
+      orbitDistance += e.deltaY * 0.02 * (orbitDistance * 0.1);
+      orbitDistance = Math.max(2, Math.min(500, orbitDistance));
+    });
+
+    renderer.domElement.addEventListener('touchstart', function (e) {
+      if (e.touches.length === 1) {
+        isDragging = true;
+        lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY;
+      }
+    });
+    renderer.domElement.addEventListener('touchmove', function (e) {
+      if (!isDragging || e.touches.length !== 1) return;
+      orbitTheta -= (e.touches[0].clientX - lastMX) * 0.005;
+      orbitPhi += (e.touches[0].clientY - lastMY) * 0.005;
+      orbitPhi = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, orbitPhi));
+      lastMX = e.touches[0].clientX; lastMY = e.touches[0].clientY;
+    });
+    renderer.domElement.addEventListener('touchend', function () { isDragging = false; });
+
+    window.addEventListener('keydown', function (e) {
+      if (e.key === 'r' || e.key === 'R') {
+        orbitTheta = Math.PI / 4; orbitPhi = Math.PI / 6; orbitDistance = 12;
+      }
+    });
+
+    // ══════════════════════════════════════════════
+    // 动画
+    // ══════════════════════════════════════════════
+    var clock = new THREE.Clock();
+    var autoRotate = true;
+
+    renderer.domElement.addEventListener('mousedown', function () { autoRotate = false; });
+    renderer.domElement.addEventListener('touchstart', function () { autoRotate = false; });
+
+    // 缓存需要更新 uniform 的 mesh 列表
+    var toonMeshList = [];
+
+    function animate() {
+      requestAnimationFrame(animate);
+      var dt = clock.getDelta();
+      var time = clock.getElapsedTime();
+
+      if (autoRotate) orbitTheta += dt * 0.15;
+
+      camera.position.x = orbitTarget.x + orbitDistance * Math.cos(orbitPhi) * Math.sin(orbitTheta);
+      camera.position.y = orbitTarget.y + orbitDistance * Math.sin(orbitPhi);
+      camera.position.z = orbitTarget.z + orbitDistance * Math.cos(orbitPhi) * Math.cos(orbitTheta);
+      camera.lookAt(orbitTarget);
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', function () {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+  })();
+  </script>
+</body>
+</html>
