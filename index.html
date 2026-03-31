@@ -120,6 +120,98 @@
       font-size: 11px;
       letter-spacing: 2px;
     }
+    /* 采花数量显示 */
+    .flower-count {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      color: #8a7e72;
+      font-size: 12px;
+      letter-spacing: 1px;
+      user-select: none;
+      background: rgba(138,126,114,0.1);
+      padding: 8px 15px;
+      border-radius: 20px;
+    }
+    .flower-count strong {
+      color: #c49070;
+      font-size: 14px;
+    }
+    /* 按 E 采集提示 */
+    .interact-hint {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #c49070;
+      font-size: 14px;
+      letter-spacing: 2px;
+      background: rgba(138,126,114,0.9);
+      padding: 10px 25px;
+      border-radius: 25px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      pointer-events: none;
+      text-align: center;
+    }
+    .interact-hint.show {
+      opacity: 1;
+    }
+    .interact-hint kbd {
+      display: inline-block;
+      background: rgba(255,255,255,0.3);
+      border-radius: 4px;
+      padding: 2px 8px;
+      margin: 0 4px;
+      font-family: inherit;
+      font-size: 12px;
+    }
+    /* 商店面板 */
+    .shop-panel {
+      position: fixed;
+      top: 60px;
+      left: 20px;
+      background: rgba(138,126,114,0.9);
+      border-radius: 12px;
+      padding: 12px;
+      color: #f0e8dc;
+      font-size: 12px;
+      user-select: none;
+      z-index: 50;
+    }
+    .shop-panel h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      letter-spacing: 2px;
+      text-align: center;
+      color: #ffd700;
+    }
+    .shop-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .shop-item:hover { background: rgba(255,255,255,0.2); }
+    .shop-item.disabled { opacity: 0.4; cursor: default; }
+    .shop-item.disabled:hover { background: rgba(255,255,255,0.1); }
+    .shop-item.purchased { opacity: 0.5; }
+    .shop-item .item-icon {
+      width: 36px; height: 36px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+    }
+    .shop-item .item-info { flex: 1; }
+    .shop-item .item-name { font-weight: bold; font-size: 12px; }
+    .shop-item .item-price { color: #ffd700; font-size: 11px; margin-top: 2px; }
+    .shop-item .item-status { font-size: 11px; color: #a0d8a0; }
   </style>
 </head>
 <body>
@@ -128,13 +220,39 @@
     <div class="loading-bar"><div class="loading-bar-inner" id="loadBar"></div></div>
     <p>MONUMENT VALLEY WORLD</p>
   </div>
+  <div class="flower-count" id="flowerCount">🌸 已采花朵: <strong>0</strong></div>
+  <div class="shop-panel" id="shopPanel">
+    <h3>🏪 兑换商店</h3>
+    <div class="shop-item" id="shopHouse1" onclick="buyItem('house1')">
+      <div class="item-icon">🏠</div>
+      <div class="item-info">
+        <div class="item-name">小木屋</div>
+        <div class="item-price">🌸 ×3</div>
+      </div>
+    </div>
+    <div class="shop-item" id="shopHouse2" onclick="buyItem('house2')">
+      <div class="item-icon">🏭</div>
+      <div class="item-info">
+        <div class="item-name">大房子</div>
+        <div class="item-price">🌸 ×10</div>
+      </div>
+    </div>
+    <div class="shop-item" id="shopGarden" onclick="buyItem('garden')">
+      <div class="item-icon">🌿</div>
+      <div class="item-info">
+        <div class="item-name">花园</div>
+        <div class="item-price">🌸 ×20</div>
+      </div>
+    </div>
+  </div>
+  <div class="interact-hint" id="interactHint"><kbd>E</kbd> 采集</div>
   <div class="hint" id="hintBar"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 · 鼠标拖拽旋转镜头 · 滚轮调距离</div>
   <div class="coords" id="coords"></div>
   <div class="minimap" id="minimap"><canvas id="minimapCanvas" width="120" height="120"></canvas></div>
   <div class="title">Monument Valley World</div>
   <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/loaders/RGBELoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/loaders/OBJLoader.js"></script>
   <script>
   (function() {
     // ════════════════════════════════════════════════════
@@ -142,31 +260,179 @@
     // ════════════════════════════════════════════════════
     var scene = new THREE.Scene();
     scene.background = new THREE.Color(0xe8e0d4);  // 先用纯色，HDR 加载后替换
-    scene.fog = new THREE.Fog(0xd4c8b8, 35, 80);   // 日落暖色雾
+    scene.fog = new THREE.Fog(0xb8dce8, 25, 60);   // 浅蓝雾色配合三渲二天空
 
     var camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 200);
 
     var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.8;
     renderer.outputEncoding = THREE.sRGBEncoding;
     document.body.appendChild(renderer.domElement);
 
-    // ── 加载 HDR 天空贴图 ──
-    var pmremGenerator = new THREE.PMREMGenerator(renderer);
-    pmremGenerator.compileEquirectangularShader();
-    new THREE.RGBELoader()
-      .setDataType(THREE.HalfFloatType)
-      .load('grasslands_sunset_4k.hdr', function(hdrTexture) {
-        var envMap = pmremGenerator.fromEquirectangular(hdrTexture).texture;
-        scene.background = hdrTexture;
-        hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
-        // 不设 scene.environment，避免影响卡通风格模型的材质
-        pmremGenerator.dispose();
-        console.log('HDR 天空贴图加载完成');
-      });
+    // ── 程序化生成三渲二风格全景天空 ──
+    (function() {
+      var W = 2048, H = 1024;
+      var c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      var ctx = c.getContext('2d');
+
+      // 天空渐变（上→下：深蓝→浅蓝→暖橙→粉色地平线）
+      var skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+      skyGrad.addColorStop(0, '#4a7ab5');
+      skyGrad.addColorStop(0.25, '#7cb5d8');
+      skyGrad.addColorStop(0.45, '#b8dce8');
+      skyGrad.addColorStop(0.55, '#f0d8b0');
+      skyGrad.addColorStop(0.62, '#e8c090');
+      skyGrad.addColorStop(0.7, '#c8a878');
+      skyGrad.addColorStop(1, '#90a870');
+      ctx.fillStyle = skyGrad;
+      ctx.fillRect(0, 0, W, H);
+
+      // 画云朵（简单椭圆组合）
+      function drawCloud(cx, cy, size) {
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        for (var ci = 0; ci < 5; ci++) {
+          var ox = (ci - 2) * size * 0.4;
+          var oy = Math.sin(ci * 1.2) * size * 0.15;
+          var r = size * (0.3 + Math.random() * 0.2);
+          ctx.beginPath();
+          ctx.ellipse(cx + ox, cy + oy, r, r * 0.6, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      for (var ci = 0; ci < 18; ci++) {
+        drawCloud(Math.random() * W, 80 + Math.random() * 280, 25 + Math.random() * 40);
+      }
+
+      // ── 画远山层（从远到近，越近越深色） ──
+      function drawMountainLayer(yBase, maxHeight, color, strokeColor, count, seed) {
+        ctx.fillStyle = color;
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, H);
+        var step = W / count;
+        for (var x = 0; x <= W; x += 3) {
+          var nx = x / step;
+          // 用多个正弦波叠加生成自然山脊
+          var h = Math.sin(nx * 0.8 + seed) * 0.3
+                + Math.sin(nx * 1.7 + seed * 2.3) * 0.25
+                + Math.sin(nx * 3.1 + seed * 0.7) * 0.15
+                + Math.sin(nx * 5.3 + seed * 1.1) * 0.1;
+          h = (h + 1) * 0.5; // normalize to 0~1
+          var y = yBase - h * maxHeight;
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(W, H);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      // 最最远山（极淡，天际线）
+      drawMountainLayer(H * 0.48, 160, 'rgba(190,205,210,0.4)', 'rgba(140,160,160,0.2)', 6, 0.3);
+      // 最远山（淡灰蓝，很高）
+      drawMountainLayer(H * 0.52, 140, 'rgba(175,195,190,0.5)', 'rgba(110,130,120,0.25)', 7, 1.5);
+      // 远山2（灰蓝绿）
+      drawMountainLayer(H * 0.55, 130, 'rgba(155,180,165,0.6)', 'rgba(90,110,95,0.3)', 9, 2.8);
+      // 远山（灰绿）
+      drawMountainLayer(H * 0.58, 110, 'rgba(140,170,130,0.7)', 'rgba(80,100,70,0.35)', 10, 3.2);
+      // 中远山（绿色偏浅）
+      drawMountainLayer(H * 0.61, 90, '#95b088', 'rgba(65,85,55,0.4)', 11, 4.5);
+      // 中山（绿色）
+      drawMountainLayer(H * 0.63, 75, '#8aaa7a', 'rgba(60,80,50,0.5)', 13, 5.7);
+      // 中近山
+      drawMountainLayer(H * 0.65, 60, '#7a9a6a', 'rgba(50,70,40,0.55)', 14, 7.0);
+      // 近山（深绿）
+      drawMountainLayer(H * 0.67, 50, '#6b8e5a', 'rgba(40,60,30,0.6)', 16, 8.1);
+
+      // ── 画远山上的树（高处密集） ──
+      function drawMountainTree(tx, ty, size, color) {
+        ctx.fillStyle = color || '#5a7a3a';
+        ctx.strokeStyle = 'rgba(30,50,15,0.4)';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.ellipse(tx, ty - size * 0.8, size * 0.5, size * 0.7, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      // 高处远山的树（小且密）
+      var treeCols = ['#4a6a30', '#5a7a3a', '#3a5a28', '#6a8a4a', '#4a7038', '#557a40'];
+      for (var mti = 0; mti < 120; mti++) {
+        var mtx = Math.random() * W;
+        var mty = H * 0.48 + Math.random() * H * 0.22;
+        var mts = 2 + Math.random() * 3;
+        drawMountainTree(mtx, mty, mts, treeCols[Math.floor(Math.random() * treeCols.length)]);
+      }
+
+      // ── 画远景小房子 ──
+      function drawHouse(hx, hy, size) {
+        var s = size;
+        // 描边
+        ctx.strokeStyle = 'rgba(40,30,20,0.7)';
+        ctx.lineWidth = 1.5;
+        // 墙壁
+        ctx.fillStyle = '#f0e0c8';
+        ctx.fillRect(hx - s/2, hy - s, s, s);
+        ctx.strokeRect(hx - s/2, hy - s, s, s);
+        // 屋顶
+        ctx.fillStyle = '#cc5544';
+        ctx.beginPath();
+        ctx.moveTo(hx - s * 0.7, hy - s);
+        ctx.lineTo(hx, hy - s * 1.7);
+        ctx.lineTo(hx + s * 0.7, hy - s);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // 窗户
+        ctx.fillStyle = '#7ab0c8';
+        ctx.fillRect(hx - s*0.15, hy - s*0.75, s*0.3, s*0.3);
+        // 门
+        ctx.fillStyle = '#8b6b4a';
+        ctx.fillRect(hx - s*0.12, hy - s*0.45, s*0.24, s*0.45);
+      }
+
+      // 散布小房子在山脚
+      var housePositions = [
+        [180, H*0.64, 10], [420, H*0.65, 8], [650, H*0.63, 12],
+        [900, H*0.66, 7], [1100, H*0.64, 9], [1350, H*0.65, 11],
+        [1550, H*0.63, 8], [1780, H*0.66, 10], [1950, H*0.64, 7],
+        [300, H*0.67, 6], [780, H*0.67, 6], [1250, H*0.67, 5],
+      ];
+      for (var hi2 = 0; hi2 < housePositions.length; hi2++) {
+        drawHouse(housePositions[hi2][0], housePositions[hi2][1], housePositions[hi2][2]);
+      }
+
+      // ── 画远景小树 ──
+      function drawTree(tx, ty, size) {
+        ctx.fillStyle = '#6a8a4a';
+        ctx.strokeStyle = 'rgba(40,60,20,0.5)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(tx, ty - size * 1.2, size * 0.6, size * 0.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#8b6b4a';
+        ctx.fillRect(tx - size * 0.1, ty - size * 0.4, size * 0.2, size * 0.5);
+      }
+      for (var ti2 = 0; ti2 < 60; ti2++) {
+        drawTree(Math.random() * W, H * 0.62 + Math.random() * H * 0.08, 3 + Math.random() * 7);
+      }
+
+      // 最前景草地带
+      var grassGrad = ctx.createLinearGradient(0, H * 0.68, 0, H);
+      grassGrad.addColorStop(0, '#7a9a60');
+      grassGrad.addColorStop(1, '#90a870');
+      ctx.fillStyle = grassGrad;
+      ctx.fillRect(0, H * 0.68, W, H * 0.32);
+
+      // 用 Canvas 纹理作为等距矩形天空背景
+      var skyTexture = new THREE.CanvasTexture(c);
+      skyTexture.mapping = THREE.EquirectangularReflectionMapping;
+      scene.background = skyTexture;
+      console.log('三渲二天空生成完成');
+    })();
 
     // ── 第三人称跟随相机参数 ──
     var camDistance = 6;       // 摄像机到人物的距离
@@ -307,10 +573,10 @@
       '  if (d > 0.4) { s = 1.0; }',
       '  else if (d > -0.2) { s = 0.82; }',
       '  else { s = 0.6; }',
-      '  float wave = sin(vUv.x * 20.0 + uTime * 2.5) * 0.5 + 0.5;',
-      '  float sparkle = smoothstep(0.75, 0.95, wave) * 0.15;',
+      '  float wave = sin(vUv.x * 15.0 + uTime * 3.0) * 0.5 + 0.5;',
+      '  float sparkle = smoothstep(0.65, 0.9, wave) * 0.25;',
       '  vec3 color = uColor * s + vec3(sparkle);',
-      '  gl_FragColor = vec4(color, 0.85);',
+      '  gl_FragColor = vec4(color, 0.9);',
       '}'
     ].join('\n');
 
@@ -361,15 +627,27 @@
     var terrainGeo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEG, TERRAIN_SEG);
     terrainGeo.rotateX(-Math.PI / 2);
 
-    function terrainHeight(x, z) {
+    function terrainHeightBase(x, z) {
       var h = Math.sin(x * 0.25 + 0.5) * Math.cos(z * 0.2 - 0.3) * 1.8;
       h += Math.sin(x * 0.5 + z * 0.3) * 0.7;
       h += Math.cos(x * 0.35 - z * 0.5 + 1.0) * 0.5;
       h += Math.sin(x * 1.2 + z * 0.8) * 0.15;
+      h += 0.5;
+      return h;
+    }
+
+    function terrainHeight(x, z) {
+      var h = terrainHeightBase(x, z) - 0.5;
+      // 第一条河
       var riverZ = Math.sin(x * 0.3) * 2.0 + Math.sin(x * 0.7) * 0.8;
       var distToRiver = Math.abs(z - riverZ);
       var riverDepth = Math.max(0, 1.0 - distToRiver * 0.8) * 1.2;
       h -= riverDepth;
+      // 第二条溪流
+      var r2x = Math.sin(z * 0.25 + 1.5) * 3.0 + Math.cos(z * 0.6) * 1.2 + 5;
+      var distToRiver2 = Math.abs(x - r2x);
+      var river2Depth = Math.max(0, 1.0 - distToRiver2 * 1.0) * 0.8;
+      h -= river2Depth;
       h += 0.5;
       return h;
     }
@@ -379,7 +657,11 @@
     }
 
     function isInRiver(x, z) {
-      return Math.abs(z - riverCenterZ(x)) < 1.0;
+      if (Math.abs(z - riverCenterZ(x)) < 1.2) return true;
+      // 第二条溪流
+      var r2x = Math.sin(z * 0.25 + 1.5) * 3.0 + Math.cos(z * 0.6) * 1.2 + 5;
+      if (Math.abs(x - r2x) < 0.8) return true;
+      return false;
     }
 
     var tPos = terrainGeo.attributes.position;
@@ -393,8 +675,8 @@
     scene.add(new THREE.Mesh(terrainGeo, toonMat(0xb8c4a0)));
     scene.add(new THREE.Mesh(terrainGeo, outMat(0.04)));
 
-    var baseGeo = new THREE.BoxGeometry(TERRAIN_SIZE + 2, 4, TERRAIN_SIZE + 2);
-    addMesh(baseGeo, 0xa09880, scene, [0, -2.5, 0], null, null, 0.05);
+    var baseGeo = new THREE.BoxGeometry(TERRAIN_SIZE + 2, 6, TERRAIN_SIZE + 2);
+    addMesh(baseGeo, 0xa09880, scene, [0, -5.5, 0], null, null, 0.05);
 
     // ════════════════════════════════════════════════════
     // RIVER
@@ -404,9 +686,10 @@
     var waterSegs = 60;
     for (var wi = 0; wi <= waterSegs; wi++) {
       var wx = -RIVER_HALF + (TERRAIN_SIZE * wi / waterSegs);
-      var wz0 = riverCenterZ(wx) - 0.55;
-      var wz1 = riverCenterZ(wx) + 0.55;
-      var wy = terrainHeight(wx, riverCenterZ(wx)) + 0.08;
+      var wz0 = riverCenterZ(wx) - 0.85;
+      var wz1 = riverCenterZ(wx) + 0.85;
+      // 水面 = 河底 + 深度偏移，确保在河谷内
+      var wy = terrainHeight(wx, riverCenterZ(wx)) + 0.4;
       waterVertices.push(wx, wy, wz0, wx, wy, wz1);
       waterUvs.push(wi / waterSegs, 0, wi / waterSegs, 1);
       if (wi < waterSegs) {
@@ -420,11 +703,90 @@
     waterGeo.setIndex(waterIndices);
     waterGeo.computeVertexNormals();
 
-    var wMat = waterMaterial(0x7ab0c4);
+    var wMat = waterMaterial(0x5aace0);
     scene.add(new THREE.Mesh(waterGeo, wMat));
     scene.add(new THREE.Mesh(waterGeo, (function() {
       var m = outMat(0.035); m.transparent = true; return m;
     })()));
+
+    // ── 河床立体深度（通用函数） ──
+    function createRiverbed(surfaceVerts, segs, depth, color) {
+      var verts = [], indices = [];
+      // surfaceVerts: [x0,y0,z0, x1,y1,z1, ...] 每对是左右两点
+      // 为每段创建：左侧面、右侧面、底面
+      for (var i = 0; i <= segs; i++) {
+        var bi = i * 6; // 每段2个顶点 * 3分量
+        var lx = surfaceVerts[bi], ly = surfaceVerts[bi+1], lz = surfaceVerts[bi+2];
+        var rx = surfaceVerts[bi+3], ry = surfaceVerts[bi+4], rz = surfaceVerts[bi+5];
+        var by = ly - depth; // 底部 y
+        // 4个顶点：左上(0)、右上(1)、左下(2)、右下(3)
+        verts.push(lx, ly, lz);  // 左上
+        verts.push(rx, ry, rz);  // 右上
+        verts.push(lx, by, lz);  // 左下
+        verts.push(rx, by, rz);  // 右下
+      }
+      for (var i = 0; i < segs; i++) {
+        var b = i * 4;
+        var n = (i + 1) * 4;
+        // 左侧面
+        indices.push(b, b+2, n, n, b+2, n+2);
+        // 右侧面
+        indices.push(b+1, n+1, b+3, n+1, n+3, b+3);
+        // 底面
+        indices.push(b+2, b+3, n+2, n+2, b+3, n+3);
+      }
+      var geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+      return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color: color || 0x2a6080,
+        transparent: true,
+        opacity: 0.75,
+        side: THREE.DoubleSide
+      }));
+    }
+
+    // 第一条河河床
+    scene.add(createRiverbed(waterVertices, waterSegs, 0.6, 0x2a6888));
+
+    // ── 第二条溪流（横向蜿蜒） ──
+    function river2CenterX(z) {
+      return Math.sin(z * 0.25 + 1.5) * 3.0 + Math.cos(z * 0.6) * 1.2 + 5;
+    }
+    function isInRiver2(x, z) {
+      return Math.abs(x - river2CenterX(z)) < 0.8;
+    }
+
+    var water2Verts = [], water2Idx = [], water2Uvs = [];
+    var water2Segs = 60;
+    for (var w2i = 0; w2i <= water2Segs; w2i++) {
+      var wz2 = -RIVER_HALF + (TERRAIN_SIZE * w2i / water2Segs);
+      var wcx = river2CenterX(wz2);
+      var wx2a = wcx - 0.75;
+      var wx2b = wcx + 0.75;
+      var wy2 = terrainHeight(wcx, wz2) + 0.35;
+      water2Verts.push(wx2a, wy2, wz2, wx2b, wy2, wz2);
+      water2Uvs.push(w2i / water2Segs, 0, w2i / water2Segs, 1);
+      if (w2i < water2Segs) {
+        var b2 = w2i * 2;
+        water2Idx.push(b2, b2+1, b2+2, b2+1, b2+3, b2+2);
+      }
+    }
+    var water2Geo = new THREE.BufferGeometry();
+    water2Geo.setAttribute('position', new THREE.Float32BufferAttribute(water2Verts, 3));
+    water2Geo.setAttribute('uv', new THREE.Float32BufferAttribute(water2Uvs, 2));
+    water2Geo.setIndex(water2Idx);
+    water2Geo.computeVertexNormals();
+
+    var wMat2 = waterMaterial(0x68b8d8);
+    scene.add(new THREE.Mesh(water2Geo, wMat2));
+    scene.add(new THREE.Mesh(water2Geo, (function() {
+      var m = outMat(0.03); m.transparent = true; return m;
+    })()));
+
+    // 第二条溪流河床
+    scene.add(createRiverbed(water2Verts, water2Segs, 0.5, 0x2a7090));
 
     // ════════════════════════════════════════════════════
     // TREE
@@ -480,6 +842,10 @@
 
       g.position.set(x, terrainHeight(x, z), z);
       g.rotation.y = rand() * Math.PI * 2;
+      // 标记这朵花可以采集
+      g.userData.isFlower = true;
+      g.userData.collectible = true;
+      g.userData.flowerIndex = flowers.length;
       scene.add(g);
       flowers.push(g);
     }
@@ -562,27 +928,102 @@
       // ★ 修复材质颜色 — GLB 导出时丢失了 baseColorFactor
       // 根据材质名字给它们分配合理的颜色
       var materialColors = {
-        '汉堡包':     [0.82, 0.65, 0.40, 1],  // 面包棕色
-        '汉堡包.002': [0.82, 0.65, 0.40, 1],  // 面包棕色
-        '汉堡包.008': [0.82, 0.65, 0.40, 1],  // 面包棕色
-        '番茄.001':   [0.85, 0.22, 0.15, 1],  // 番茄红
-        '材质.004':   [0.83, 0.72, 0.55, 1],  // 皮肤色
-        'runes .003': [0.35, 0.25, 0.55, 1],  // 神秘紫（符文）
+        '汉堡包':     [0.30, 0.55, 0.85, 1],  // 衣服：蓝色
+        '汉堡包.002': [0.30, 0.55, 0.85, 1],  // 衣服：蓝色
+        '汉堡包.008': [0.95, 0.82, 0.25, 1],  // 帽子装饰：黄色（默认）
+        '材质.004':   [0.90, 0.82, 0.50, 1],  // 浅黄色
       };
-      charRoot.traverse(function(child) {
-        if (child.isMesh && child.material) {
-          var mat = child.material;
-          var matName = mat.name || '';
-          // 如果材质没有 baseColor，给它设一个
-          if (materialColors[matName]) {
-            var c = materialColors[matName];
-            mat.color = new THREE.Color(c[0], c[1], c[2]);
-          } else if (!mat.color || (mat.color.r === 1 && mat.color.g === 1 && mat.color.b === 1)) {
-            // 没匹配到名字且是默认白色 → 给个肤色
-            mat.color = new THREE.Color(0.83, 0.72, 0.55);
+
+      // 创建蓝色渐变纹理（上深下浅）
+      function createBlueGradientTexture() {
+        var canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 128;
+        var ctx = canvas.getContext('2d');
+        var grad = ctx.createLinearGradient(0, 0, 0, 128);
+        grad.addColorStop(0, '#1a3a70');
+        grad.addColorStop(0.4, '#2a5fa0');
+        grad.addColorStop(0.7, '#4a8ac8');
+        grad.addColorStop(1, '#7ab8e0');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 64, 128);
+        var tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        return tex;
+      }
+
+      var blueGradientTexture = createBlueGradientTexture();
+
+      // 创建淡紫色斑点纹理（给无材质部分用）
+      function createPurpleDotTexture() {
+        var canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#b8a0d0';
+        ctx.fillRect(0, 0, 64, 64);
+        ctx.fillStyle = 'rgba(140, 100, 180, 0.6)';
+        for (var dy = 0; dy < 64; dy += 10) {
+          for (var dx = 0; dx < 64; dx += 10) {
+            var ox = dx + ((dy / 10) % 2) * 5;
+            ctx.beginPath();
+            ctx.arc(ox, dy, 2.5, 0, Math.PI * 2);
+            ctx.fill();
           }
         }
+        var tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        return tex;
+      }
+      var purpleDotTexture = createPurpleDotTexture();
+
+      // 先收集所有 mesh，避免 traverse 中修改出问题
+      var allCharMeshes = [];
+      charRoot.traverse(function(child) {
+        if (child.isMesh) allCharMeshes.push(child);
       });
+
+      for (var mi = 0; mi < allCharMeshes.length; mi++) {
+        var mesh = allCharMeshes[mi];
+        var oldMat = mesh.material;
+        var matName = oldMat ? (oldMat.name || '') : '';
+        var matType = oldMat ? oldMat.type : 'null';
+
+        console.log('[角色材质]', mi, mesh.name, 'mat:', matName, 'type:', matType, 'skinned:', mesh.isSkinnedMesh);
+
+        var targetColor, useMap = null;
+        if (materialColors[matName]) {
+          var c = materialColors[matName];
+          targetColor = new THREE.Color(c[0], c[1], c[2]);
+          if (matName === '汉堡包' || matName === '汉堡包.002') {
+            useMap = blueGradientTexture;
+          }
+          // 帽子主体改橙色（不是装饰 Cube_007）
+          if (matName === '汉堡包.008' && mesh.name.indexOf('Cube_007') === -1) {
+            targetColor = new THREE.Color(0.95, 0.55, 0.20); // 橙色
+            useMap = null;
+          }
+        } else {
+          targetColor = new THREE.Color(0.75, 0.65, 0.85);
+          useMap = purpleDotTexture;
+        }
+
+        // 强制创建全新材质
+        var newMat = new THREE.MeshBasicMaterial({ color: targetColor });
+        if (useMap) newMat.map = useMap;
+
+        // 如果是 SkinnedMesh，需要设置 skinning
+        if (mesh.isSkinnedMesh) {
+          newMat.skinning = true;
+        }
+
+        mesh.material = newMat;
+        mesh.material.needsUpdate = true;
+
+        console.log('[角色材质] →', mi, '新颜色:', targetColor.getHexString(), '有纹理:', !!useMap);
+      }
 
       // 计算整个模型的包围盒
       var box = new THREE.Box3().setFromObject(charRoot);
@@ -1182,6 +1623,46 @@
     scene.add(dl);
 
     // ════════════════════════════════════════════════════
+    // COLLISION — 碰撞体（圆形区域）
+    // ════════════════════════════════════════════════════
+    var colliders = [];
+
+    // 房子碰撞
+    colliders.push({ x: houseX, z: houseZ, r: 1.3 });
+    // 塔楼碰撞
+    colliders.push({ x: 6, z: -5, r: 1.0 });
+    colliders.push({ x: -7, z: 5, r: 1.0 });
+    // 柱廊碰撞（长条形近似为两个圆）
+    colliders.push({ x: 2.2, z: -6, r: 0.8 });
+    colliders.push({ x: 3.8, z: -6, r: 0.8 });
+    // 桥碰撞（河上的桥不阻挡，但桥的栏杆边缘）
+    // bridge1 在 x=-2, bridge2 在 x=4，都横跨河流
+
+    // 树碰撞
+    for (var tci = 0; tci < trees.length; tci++) {
+      colliders.push({ x: trees[tci].position.x, z: trees[tci].position.z, r: 0.35 });
+    }
+    // 石头碰撞
+    for (var sci = 0; sci < stones.length; sci++) {
+      colliders.push({ x: stones[sci].position.x, z: stones[sci].position.z, r: 0.3 });
+    }
+
+    // 碰撞检测函数
+    function checkCollision(newX, newZ, radius) {
+      for (var ci = 0; ci < colliders.length; ci++) {
+        var col = colliders[ci];
+        var dx = newX - col.x;
+        var dz = newZ - col.z;
+        var dist = Math.sqrt(dx * dx + dz * dz);
+        var minDist = radius + col.r;
+        if (dist < minDist) {
+          return col; // 碰撞了
+        }
+      }
+      return null;
+    }
+
+    // ════════════════════════════════════════════════════
     // KEYBOARD INPUT — WASD
     // ════════════════════════════════════════════════════
     var keys = {};
@@ -1190,6 +1671,412 @@
     });
     window.addEventListener('keyup', function(e) {
       keys[e.key.toLowerCase()] = false;
+    });
+
+    // ════════════════════════════════════════════════════
+    // FLOWER COLLECTION SYSTEM — 采花系统
+    // ════════════════════════════════════════════════════
+    var flowerCount = 0;
+    var interactHint = document.getElementById('interactHint');
+    var flowerCountEl = document.getElementById('flowerCount');
+    var collectedFlowers = [];
+
+    // 查找最近的可采集花
+    function findNearestFlower() {
+      var nearest = null;
+      var nearestDist = 1.5;
+
+      for (var i = 0; i < flowers.length; i++) {
+        var f = flowers[i];
+        if (!f.parent || collectedFlowers.indexOf(f) >= 0) continue;
+
+        var dx = f.position.x - character.position.x;
+        var dz = f.position.z - character.position.z;
+        var dist = Math.sqrt(dx*dx + dz*dz);
+
+        if (dist < nearestDist) {
+          nearest = f;
+          nearestDist = dist;
+        }
+      }
+      return nearest;
+    }
+
+    // 按 E 键采集花
+    window.addEventListener('keydown', function(e) {
+      if (e.key.toLowerCase() === 'e') {
+        var flower = findNearestFlower();
+        if (flower) {
+          scene.remove(flower);
+          collectedFlowers.push(flower);
+          flowerCount++;
+          if (flowerCountEl) {
+            flowerCountEl.innerHTML = '🌸 已采花朵: <strong>' + flowerCount + '</strong>';
+          }
+          if (interactHint) interactHint.classList.remove('show');
+          updateShopUI();
+          console.log('采集了花! 总数:', flowerCount);
+        }
+      }
+    });
+
+    // ════════════════════════════════════════════════════
+    // SHOP SYSTEM — 兑换商店
+    // ════════════════════════════════════════════════════
+    var shopItems = {
+      house1:  { name: '小木屋',   price: 3,  file: 'model.obj',    type: 'obj', purchased: false, model: null, icon: '🏠' },
+      house2:  { name: '大房子',   price: 10, file: 'bighouse.obj', type: 'obj', purchased: false, model: null, icon: '🏭' },
+      garden:  { name: '花园',     price: 20, file: 'garden.glb',   type: 'glb', purchased: false, model: null, icon: '🌿' }
+    };
+
+    // 颜色配置（和 viewer-dual.html 一致）
+    var house1Colors = { base: 0x5A9E4B, wall: 0xF5DEB3, detail: 0xE8833A, roof: 0xCC3333 };
+    var house2Colors = { base: 0x5A9E4B, wall: 0xE8E8D0, detail: 0x5B9BD5, roof: 0x2E4057 };
+    var gardenColors = { ground: 0x7caa5a, bush: 0x4a7a3a, trunk: 0x8b6b4a, canopy: 0x5a9a48 };
+
+    // 描边材质（和 viewer-dual.html 一致）
+    function createOutlineMaterial(thickness, outlineColor) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uThick: { value: thickness || 0.02 },
+          uOutlineColor: { value: new THREE.Color(outlineColor || 0x1c1714) }
+        },
+        vertexShader: 'uniform float uThick;\nvoid main() {\n  vec3 p = position + normal * uThick;\n  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);\n}',
+        fragmentShader: 'uniform vec3 uOutlineColor;\nvoid main() {\n  gl_FragColor = vec4(uOutlineColor, 1.0);\n}',
+        side: THREE.BackSide
+      });
+    }
+
+    // ── 按高度分色处理 OBJ 小屋模型 ──
+    function processHouse(object, colorMap) {
+      var result = new THREE.Group();
+      var meshes = [];
+      object.traverse(function(c) { if (c.isMesh) meshes.push(c); });
+
+      for (var m = 0; m < meshes.length; m++) {
+        var geo = meshes[m].geometry;
+        if (!geo.attributes.normal) geo.computeVertexNormals();
+        var pos = geo.attributes.position;
+        var nor = geo.attributes.normal;
+        var totalVerts = pos.count;
+
+        var yMin = Infinity, yMax = -Infinity;
+        for (var i = 0; i < totalVerts; i++) {
+          var y = pos.getY(i);
+          if (y < yMin) yMin = y;
+          if (y > yMax) yMax = y;
+        }
+
+        var triCount = Math.floor(totalVerts / 3);
+        var faceCenters = [];
+        for (var t = 0; t < triCount; t++) {
+          faceCenters[t] = (pos.getY(t*3) + pos.getY(t*3+1) + pos.getY(t*3+2)) / 3;
+        }
+
+        var sorted = faceCenters.slice().sort(function(a,b) { return a-b; });
+        var q1 = sorted[Math.floor(triCount*0.25)];
+        var q2 = sorted[Math.floor(triCount*0.50)];
+        var q3 = sorted[Math.floor(triCount*0.75)];
+
+        var buckets = {
+          base: { positions: [], normals: [] },
+          wall: { positions: [], normals: [] },
+          wallUpper: { positions: [], normals: [] },
+          roof: { positions: [], normals: [] }
+        };
+
+        for (var t = 0; t < triCount; t++) {
+          var yc = faceCenters[t];
+          var layer = yc < q1 ? 'base' : yc < q2 ? 'wall' : yc < q3 ? 'wallUpper' : 'roof';
+          var bucket = buckets[layer];
+          var i0 = t * 3;
+          for (var vi = i0; vi < i0+3; vi++) {
+            bucket.positions.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+            bucket.normals.push(nor.getX(vi), nor.getY(vi), nor.getZ(vi));
+          }
+        }
+
+        var layerConfig = [
+          { name: 'base', color: colorMap.base },
+          { name: 'wall', color: colorMap.wall },
+          { name: 'wallUpper', color: colorMap.detail },
+          { name: 'roof', color: colorMap.roof }
+        ];
+
+        for (var l = 0; l < layerConfig.length; l++) {
+          var cfg = layerConfig[l];
+          var bucket = buckets[cfg.name];
+          if (bucket.positions.length === 0) continue;
+          var subGeo = new THREE.BufferGeometry();
+          subGeo.setAttribute('position', new THREE.Float32BufferAttribute(bucket.positions, 3));
+          subGeo.setAttribute('normal', new THREE.Float32BufferAttribute(bucket.normals, 3));
+          result.add(new THREE.Mesh(subGeo, new THREE.MeshToonMaterial({ color: cfg.color })));
+          result.add(new THREE.Mesh(subGeo, createOutlineMaterial(0.02)));
+        }
+      }
+      return result;
+    }
+
+    // ── 按高度分色处理 GLB 花园模型 ──
+    function processGarden(object, colorMap) {
+      var result = new THREE.Group();
+      var meshes = [];
+      object.traverse(function(c) { if (c.isMesh) meshes.push(c); });
+
+      for (var m = 0; m < meshes.length; m++) {
+        var geo = meshes[m].geometry;
+        if (!geo.attributes.normal) geo.computeVertexNormals();
+        var pos = geo.attributes.position;
+        var indexArr = geo.index ? geo.index.array : null;
+
+        if (!indexArr) {
+          result.add(new THREE.Mesh(geo, new THREE.MeshToonMaterial({ color: colorMap.ground })));
+          result.add(new THREE.Mesh(geo, createOutlineMaterial(0.015)));
+          continue;
+        }
+
+        var yMin = Infinity, yMax = -Infinity;
+        for (var i = 0; i < pos.count; i++) {
+          var y = pos.getY(i);
+          if (y < yMin) yMin = y;
+          if (y > yMax) yMax = y;
+        }
+        var yRange = yMax - yMin;
+
+        var layers = { ground: [], bush: [], trunk: [], canopy: [] };
+        for (var i = 0; i < indexArr.length; i += 3) {
+          var yCenter = (pos.getY(indexArr[i]) + pos.getY(indexArr[i+1]) + pos.getY(indexArr[i+2])) / 3;
+          var yRel = yRange > 0 ? (yCenter - yMin) / yRange : 0;
+          var layer = yRel < 0.15 ? 'ground' : yRel < 0.35 ? 'trunk' : yRel < 0.65 ? 'bush' : 'canopy';
+          layers[layer].push(indexArr[i], indexArr[i+1], indexArr[i+2]);
+        }
+
+        var layerNames = ['ground', 'bush', 'trunk', 'canopy'];
+        for (var l = 0; l < layerNames.length; l++) {
+          var name = layerNames[l];
+          if (layers[name].length === 0) continue;
+          var subGeo = geo.clone();
+          subGeo.setIndex(new THREE.BufferAttribute(new Uint32Array(layers[name]), 1));
+          subGeo.computeVertexNormals();
+          result.add(new THREE.Mesh(subGeo, new THREE.MeshToonMaterial({ color: colorMap[name] })));
+          result.add(new THREE.Mesh(subGeo, createOutlineMaterial(0.015)));
+        }
+      }
+      return result;
+    }
+
+    // ── 预加载模型 ──
+    var objLoader = new THREE.OBJLoader();
+    var gltfLoader2 = new THREE.GLTFLoader();
+
+    function preloadModel(key) {
+      var item = shopItems[key];
+      if (item.type === 'obj') {
+        objLoader.load(item.file, function(obj) {
+          var colorMap = key === 'house1' ? house1Colors : house2Colors;
+          item.model = processHouse(obj, colorMap);
+          // 统一缩放到约 1 单位高
+          var box = new THREE.Box3().setFromObject(item.model);
+          var h = box.max.y - box.min.y;
+          var targetH = 2.0;
+          var s = targetH / h;
+          item.model.scale.set(s, s, s);
+          // 居中
+          var center = new THREE.Vector3();
+          box.getCenter(center);
+          item.model.position.set(-center.x * s, -box.min.y * s, -center.z * s);
+          console.log('预加载完成:', item.name, '高度:', h.toFixed(2), '缩放:', s.toFixed(4));
+        });
+      } else if (item.type === 'glb') {
+        gltfLoader2.load(item.file, function(gltf) {
+          item.model = processGarden(gltf.scene, gardenColors);
+          var box = new THREE.Box3().setFromObject(item.model);
+          var h = box.max.y - box.min.y;
+          var targetH = 1.5;
+          var s = targetH / h;
+          item.model.scale.set(s, s, s);
+          var center = new THREE.Vector3();
+          box.getCenter(center);
+          item.model.position.set(-center.x * s, -box.min.y * s, -center.z * s);
+          console.log('预加载完成:', item.name, '高度:', h.toFixed(2), '缩放:', s.toFixed(4));
+        });
+      }
+    }
+    preloadModel('house1');
+    preloadModel('house2');
+    preloadModel('garden');
+
+    // 更新商店 UI 状态
+    function updateShopUI() {
+      var keys = ['house1', 'house2', 'garden'];
+      for (var si = 0; si < keys.length; si++) {
+        var key = keys[si];
+        var item = shopItems[key];
+        var el = document.getElementById('shop' + key.charAt(0).toUpperCase() + key.slice(1));
+        if (!el) continue;
+
+        // 清除旧状态
+        el.classList.remove('disabled', 'purchased');
+
+        if (item.purchased) {
+          el.classList.add('purchased');
+          el.querySelector('.item-price').innerHTML = '';
+          el.querySelector('.item-info').innerHTML = '<div class="item-name">' + item.name + '</div><div class="item-status">✅ 已放置</div>';
+        } else if (flowerCount < item.price) {
+          el.classList.add('disabled');
+        }
+      }
+    }
+
+    // 在角色前方放置建筑
+    function placeBuilding(key) {
+      var item = shopItems[key];
+      if (!item.model) {
+        console.warn('模型还没加载完:', key);
+        return;
+      }
+
+      // 用 wrapper 包裹，模型内部已经居中缩放好了
+      var wrapper = new THREE.Group();
+      var model = item.model.clone();
+      wrapper.add(model);
+
+      // 放在角色前方 3 单位处
+      var facing = charFacing || 0;
+      var px = character.position.x + Math.sin(facing) * 3;
+      var pz = character.position.z + Math.cos(facing) * 3;
+      var py = terrainHeight(px, pz);
+
+      wrapper.position.set(px, py, pz);
+      wrapper.rotation.y = facing;
+      scene.add(wrapper);
+
+      console.log('放置建筑:', item.name, '在', px.toFixed(1), py.toFixed(1), pz.toFixed(1));
+    }
+
+    // 全局购买函数（给 onclick 用）
+    window.buyItem = function(key) {
+      var item = shopItems[key];
+      if (!item) return;
+      if (item.purchased) return;
+      if (flowerCount < item.price) return;
+
+      // 扣花
+      flowerCount -= item.price;
+      item.purchased = true;
+
+      // 更新花朵数 UI
+      if (flowerCountEl) {
+        flowerCountEl.innerHTML = '🌸 已采花朵: <strong>' + flowerCount + '</strong>';
+      }
+
+      // 放置建筑
+      placeBuilding(key);
+
+      // 更新商店 UI
+      updateShopUI();
+
+      console.log('兑换成功:', item.name, '剩余花:', flowerCount);
+    };
+
+    // 初始化商店 UI
+    updateShopUI();
+
+    // ════════════════════════════════════════════════════
+    // 材质检查模式 — 按 I 开启/关闭
+    // ════════════════════════════════════════════════════
+    var inspectMode = false;
+    var inspectRaycaster = new THREE.Raycaster();
+    var inspectMouse = new THREE.Vector2();
+    var inspectLastMesh = null;
+    var inspectLastColor = null;
+
+    // 创建提示框
+    var inspectDiv = document.createElement('div');
+    inspectDiv.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);' +
+      'background:rgba(0,0,0,0.8);color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;' +
+      'pointer-events:none;display:none;z-index:999;text-align:center;line-height:1.6;';
+    document.body.appendChild(inspectDiv);
+
+    // 材质信息框（跟随鼠标）
+    var matInfoDiv = document.createElement('div');
+    matInfoDiv.style.cssText = 'position:fixed;background:rgba(0,0,0,0.85);color:#fff;padding:8px 14px;' +
+      'border-radius:8px;font-size:12px;pointer-events:none;display:none;z-index:999;white-space:nowrap;';
+    document.body.appendChild(matInfoDiv);
+
+    window.addEventListener('keydown', function(e) {
+      if (e.key.toLowerCase() === 'i') {
+        inspectMode = !inspectMode;
+        if (inspectMode) {
+          inspectDiv.innerHTML = '🔍 材质检查模式 <span style="color:#aaa">（鼠标悬停角色查看材质，再按 I 关闭）</span>';
+          inspectDiv.style.display = 'block';
+          // 同时在控制台打印所有角色材质
+          console.log('========== 角色所有材质 ==========');
+          if (glbModel) {
+            glbModel.traverse(function(child) {
+              if (child.isMesh) {
+                var m = child.material;
+                var c = m && m.color ? '#' + m.color.getHexString() : 'none';
+                console.log('  mesh: "' + child.name + '" | material: "' + (m ? m.name : 'null') + '" | color: ' + c + ' | type: ' + (m ? m.type : 'null'));
+              }
+            });
+          }
+          console.log('===================================');
+        } else {
+          inspectDiv.style.display = 'none';
+          matInfoDiv.style.display = 'none';
+          // 恢复上一个高亮
+          if (inspectLastMesh && inspectLastColor) {
+            inspectLastMesh.material.color.copy(inspectLastColor);
+            inspectLastMesh = null;
+          }
+        }
+      }
+    });
+
+    window.addEventListener('mousemove', function(e) {
+      if (!inspectMode) return;
+      inspectMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      inspectMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+      inspectRaycaster.setFromCamera(inspectMouse, camera);
+
+      // 只检测角色的 mesh
+      var charMeshes = [];
+      if (glbModel) {
+        glbModel.traverse(function(child) {
+          if (child.isMesh) charMeshes.push(child);
+        });
+      }
+
+      var hits = inspectRaycaster.intersectObjects(charMeshes, false);
+
+      // 恢复上一个
+      if (inspectLastMesh && inspectLastColor) {
+        inspectLastMesh.material.color.copy(inspectLastColor);
+        inspectLastMesh = null;
+      }
+
+      if (hits.length > 0) {
+        var hitMesh = hits[0].object;
+        var mat = hitMesh.material;
+        var colorHex = mat && mat.color ? '#' + mat.color.getHexString() : 'none';
+
+        // 高亮
+        inspectLastMesh = hitMesh;
+        inspectLastColor = mat.color.clone();
+        mat.color.set(0xff00ff); // 粉红高亮
+
+        // 显示信息
+        matInfoDiv.innerHTML = '🎯 <b>' + hitMesh.name + '</b><br>' +
+          '材质: <span style="color:#ffd700">' + (mat.name || '无名') + '</span><br>' +
+          '颜色: <span style="color:' + colorHex + '">■</span> ' + colorHex;
+        matInfoDiv.style.display = 'block';
+        matInfoDiv.style.left = (e.clientX + 15) + 'px';
+        matInfoDiv.style.top = (e.clientY + 15) + 'px';
+      } else {
+        matInfoDiv.style.display = 'none';
+      }
     });
 
     var MOVE_SPEED = 3.5;
@@ -1215,8 +2102,17 @@
       var dt = clock.getDelta();
       var t = clock.getElapsedTime();
 
+      // ── 靠近花时显示采集提示 ──
+      var nearbyFlower = findNearestFlower();
+      if (nearbyFlower && interactHint) {
+        interactHint.classList.add('show');
+      } else if (interactHint) {
+        interactHint.classList.remove('show');
+      }
+
       // ── 溪水 ──
       wMat.uniforms.uTime.value = t;
+      wMat2.uniforms.uTime.value = t;
 
       // ── WASD 移动 ──
       // 获取相机在 xz 平面的朝向
@@ -1245,6 +2141,24 @@
         newX = Math.max(-TERRAIN_BOUND, Math.min(TERRAIN_BOUND, newX));
         newZ = Math.max(-TERRAIN_BOUND, Math.min(TERRAIN_BOUND, newZ));
 
+        // 碰撞检测（角色半径 0.25）
+        var charRadius = 0.25;
+        var hit = checkCollision(newX, newZ, charRadius);
+        if (hit) {
+          // 尝试只沿 X 移动
+          var hitX = checkCollision(newX, character.position.z, charRadius);
+          var hitZ = checkCollision(character.position.x, newZ, charRadius);
+          if (!hitX) {
+            newZ = character.position.z; // X 方向可以走
+          } else if (!hitZ) {
+            newX = character.position.x; // Z 方向可以走
+          } else {
+            // 两个方向都碰到了，不动
+            newX = character.position.x;
+            newZ = character.position.z;
+          }
+        }
+
         character.position.x = newX;
         character.position.z = newZ;
 
@@ -1255,9 +2169,15 @@
         walkCycle += dt * 8;
       }
 
-      // 高度适配地形（平滑过渡）
+      // 高度适配地形（防穿模）
       var targetY = terrainHeight(character.position.x, character.position.z);
-      character.position.y += (targetY - character.position.y) * 0.12;
+      if (character.position.y < targetY) {
+        // 角色在地面以下，立即吸附
+        character.position.y = targetY;
+      } else {
+        // 平滑下降
+        character.position.y += (targetY - character.position.y) * 0.35;
+      }
 
       // 平滑转向
       var facingDiff = targetFacing - charFacing;
@@ -1435,6 +2355,18 @@
           mi2 === -60 ? minimapCtx.moveTo(sx, sy) : minimapCtx.lineTo(sx, sy);
         }
         minimapCtx.stroke();
+        // 第二条溪流
+        minimapCtx.strokeStyle = 'rgba(100,170,210,0.7)';
+        minimapCtx.lineWidth = 3;
+        minimapCtx.beginPath();
+        for (var mi3 = -120; mi3 <= 120; mi3 += 2) {
+          var mz3 = mi3 / 5;
+          var mx3 = Math.sin(mz3 * 0.25 + 1.5) * 3.0 + Math.cos(mz3 * 0.6) * 1.2 + 5;
+          var sx3 = 60 + mx3 * (120 / TERRAIN_SIZE);
+          var sy3 = 60 + mz3 * (120 / TERRAIN_SIZE);
+          mi3 === -120 ? minimapCtx.moveTo(sx3, sy3) : minimapCtx.lineTo(sx3, sy3);
+        }
+        minimapCtx.stroke();
         // 建筑标记
         minimapCtx.fillStyle = '#c49070';
         var hsx = 60 + houseX * (120/TERRAIN_SIZE), hsy = 60 + houseZ * (120/TERRAIN_SIZE);
@@ -1494,8 +2426,16 @@
     window.addEventListener('resize', function() {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
+      renderer.setPixelRatio(window.devicePixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
+    // 延迟再 resize 一次，兼容 iframe 嵌入
+    setTimeout(function() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }, 500);
   })();
   </script>
 </body>
