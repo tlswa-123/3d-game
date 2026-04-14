@@ -166,6 +166,40 @@
       font-family: inherit;
       font-size: 12px;
     }
+    /* 放置模式提示 */
+    .placement-hint {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 200;
+      pointer-events: none;
+    }
+    .placement-hint-inner {
+      background: rgba(40,40,40,0.85);
+      color: #e0e0e0;
+      padding: 12px 28px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.8;
+      text-align: center;
+      border: 2px solid rgba(100,200,100,0.5);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      animation: placementPulse 2s ease-in-out infinite;
+    }
+    .ph-key {
+      display: inline-block;
+      background: rgba(255,255,255,0.2);
+      border-radius: 4px;
+      padding: 1px 8px;
+      margin: 0 2px;
+      font-weight: bold;
+      font-size: 12px;
+    }
+    @keyframes placementPulse {
+      0%, 100% { border-color: rgba(100,200,100,0.5); }
+      50% { border-color: rgba(100,200,100,0.9); }
+    }
     /* 商店面板 */
     .shop-panel {
       position: fixed;
@@ -246,6 +280,12 @@
     </div>
   </div>
   <div class="interact-hint" id="interactHint"><kbd>E</kbd> 采集</div>
+  <div class="placement-hint" id="placementHint" style="display:none;">
+    <div class="placement-hint-inner">
+      🏗️ 放置模式<br>
+      <span class="ph-key">左键</span> 放置 · <span class="ph-key">R</span> 旋转 · <span class="ph-key">右键/Esc</span> 取消
+    </div>
+  </div>
   <div class="hint" id="hintBar"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 · 鼠标拖拽旋转镜头 · 滚轮调距离</div>
   <div class="coords" id="coords"></div>
   <div class="minimap" id="minimap"><canvas id="minimapCanvas" width="120" height="120"></canvas></div>
@@ -447,6 +487,7 @@
 
     // 鼠标拖拽控制视角
     renderer.domElement.addEventListener('mousedown', function(e) {
+      if (placementMode) return; // 放置模式下不拖拽视角
       isDragging = true;
       lastMouseX = e.clientX;
       lastMouseY = e.clientY;
@@ -918,161 +959,193 @@
 
     // 加载 GLB
     var gltfLoader = new THREE.GLTFLoader();
-    gltfLoader.load('无标题.glb', function(gltf) {
+    gltfLoader.load('character_lite.glb', function(gltf) {
       var model = gltf.scene;
-
-      // ★ 用整个场景作为 charRoot（不单独取 Armature）
-      // 这样所有子节点的相对变换都保持正确
       var charRoot = model;
 
-      // ★ 修复材质颜色 — GLB 导出时丢失了 baseColorFactor
-      // 根据材质名字给它们分配合理的颜色
-      var materialColors = {
-        '汉堡包':     [0.30, 0.55, 0.85, 1],  // 衣服：蓝色
-        '汉堡包.002': [0.30, 0.55, 0.85, 1],  // 衣服：蓝色
-        '汉堡包.008': [0.95, 0.82, 0.25, 1],  // 帽子装饰：黄色（默认）
-        '材质.004':   [0.90, 0.82, 0.50, 1],  // 浅黄色
+      // ★ 三渲二材质处理：按高度三色渐变 + 描边
+      // 角色颜色方案：头部暖色 → 身体蓝色 → 脚部深色
+      var charColors = {
+        top:    0xE8A060,  // 头部/帽子：暖橙色
+        mid:    0x4A8AC8,  // 身体/衣服：蓝色
+        bottom: 0x3A5A40   // 腿部/鞋子：深绿色
       };
 
-      // 创建蓝色渐变纹理（上深下浅）
-      function createBlueGradientTexture() {
-        var canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 128;
-        var ctx = canvas.getContext('2d');
-        var grad = ctx.createLinearGradient(0, 0, 0, 128);
-        grad.addColorStop(0, '#1a3a70');
-        grad.addColorStop(0.4, '#2a5fa0');
-        grad.addColorStop(0.7, '#4a8ac8');
-        grad.addColorStop(1, '#7ab8e0');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 64, 128);
-        var tex = new THREE.CanvasTexture(canvas);
-        tex.wrapS = THREE.RepeatWrapping;
-        tex.wrapT = THREE.RepeatWrapping;
-        return tex;
-      }
-
-      var blueGradientTexture = createBlueGradientTexture();
-
-      // 创建淡紫色斑点纹理（给无材质部分用）
-      function createPurpleDotTexture() {
-        var canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 64;
-        var ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#b8a0d0';
-        ctx.fillRect(0, 0, 64, 64);
-        ctx.fillStyle = 'rgba(140, 100, 180, 0.6)';
-        for (var dy = 0; dy < 64; dy += 10) {
-          for (var dx = 0; dx < 64; dx += 10) {
-            var ox = dx + ((dy / 10) % 2) * 5;
-            ctx.beginPath();
-            ctx.arc(ox, dy, 2.5, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-        var tex = new THREE.CanvasTexture(canvas);
-        tex.wrapS = THREE.RepeatWrapping;
-        tex.wrapT = THREE.RepeatWrapping;
-        return tex;
-      }
-      var purpleDotTexture = createPurpleDotTexture();
-
-      // 先收集所有 mesh，避免 traverse 中修改出问题
-      var allCharMeshes = [];
+      // 收集所有 mesh
+      var charMeshes = [];
       charRoot.traverse(function(child) {
-        if (child.isMesh) allCharMeshes.push(child);
+        if (child.isMesh && child.geometry) charMeshes.push(child);
       });
 
-      for (var mi = 0; mi < allCharMeshes.length; mi++) {
-        var mesh = allCharMeshes[mi];
-        var oldMat = mesh.material;
-        var matName = oldMat ? (oldMat.name || '') : '';
-        var matType = oldMat ? oldMat.type : 'null';
+      for (var cmi = 0; cmi < charMeshes.length; cmi++) {
+        var cmesh = charMeshes[cmi];
+        var geo = cmesh.geometry;
+        if (!geo.attributes.position) continue;
+        if (!geo.attributes.normal) geo.computeVertexNormals();
 
-        console.log('[角色材质]', mi, mesh.name, 'mat:', matName, 'type:', matType, 'skinned:', mesh.isSkinnedMesh);
+        var pos = geo.attributes.position;
+        var nor = geo.attributes.normal;
 
-        var targetColor, useMap = null;
-        if (materialColors[matName]) {
-          var c = materialColors[matName];
-          targetColor = new THREE.Color(c[0], c[1], c[2]);
-          if (matName === '汉堡包' || matName === '汉堡包.002') {
-            useMap = blueGradientTexture;
-          }
-          // 帽子主体改橙色（不是装饰 Cube_007）
-          if (matName === '汉堡包.008' && mesh.name.indexOf('Cube_007') === -1) {
-            targetColor = new THREE.Color(0.95, 0.55, 0.20); // 橙色
-            useMap = null;
-          }
+        // 计算 Y 范围
+        var yMin = Infinity, yMax = -Infinity;
+        for (var vi = 0; vi < pos.count; vi++) {
+          var y = pos.getY(vi);
+          if (y < yMin) yMin = y;
+          if (y > yMax) yMax = y;
+        }
+        var yRange = yMax - yMin;
+        if (yRange === 0) yRange = 1;
+
+        // 如果是 indexed geometry，按三角面分桶
+        var indexArr = geo.index ? geo.index.array : null;
+        var triCount, getTriVert;
+
+        if (indexArr) {
+          triCount = Math.floor(indexArr.length / 3);
+          getTriVert = function(t, v) { return indexArr[t * 3 + v]; };
         } else {
-          targetColor = new THREE.Color(0.75, 0.65, 0.85);
-          useMap = purpleDotTexture;
+          triCount = Math.floor(pos.count / 3);
+          getTriVert = function(t, v) { return t * 3 + v; };
         }
 
-        // 强制创建全新材质
-        var newMat = new THREE.MeshBasicMaterial({ color: targetColor });
-        if (useMap) newMat.map = useMap;
+        var buckets = {
+          top: { positions: [], normals: [] },
+          mid: { positions: [], normals: [] },
+          bottom: { positions: [], normals: [] }
+        };
 
-        // 如果是 SkinnedMesh，需要设置 skinning
-        if (mesh.isSkinnedMesh) {
-          newMat.skinning = true;
+        for (var ti = 0; ti < triCount; ti++) {
+          var i0 = getTriVert(ti, 0), i1 = getTriVert(ti, 1), i2 = getTriVert(ti, 2);
+          var yCenter = (pos.getY(i0) + pos.getY(i1) + pos.getY(i2)) / 3;
+          var yRel = (yCenter - yMin) / yRange;
+
+          var layer;
+          if (yRel > 0.55) layer = 'top';
+          else if (yRel > 0.25) layer = 'mid';
+          else layer = 'bottom';
+
+          var bucket = buckets[layer];
+          var verts = [i0, i1, i2];
+          for (var vv = 0; vv < 3; vv++) {
+            var idx = verts[vv];
+            bucket.positions.push(pos.getX(idx), pos.getY(idx), pos.getZ(idx));
+            bucket.normals.push(nor.getX(idx), nor.getY(idx), nor.getZ(idx));
+          }
         }
 
-        mesh.material = newMat;
-        mesh.material.needsUpdate = true;
+        // 隐藏原始 mesh
+        cmesh.visible = false;
 
-        console.log('[角色材质] →', mi, '新颜色:', targetColor.getHexString(), '有纹理:', !!useMap);
+        // 为每层创建 toon mesh + 描边
+        var layerConfig = [
+          { name: 'bottom', color: charColors.bottom },
+          { name: 'mid',    color: charColors.mid },
+          { name: 'top',    color: charColors.top }
+        ];
+
+        // 描边材质（细一点）
+        var charOutlineMat = new THREE.ShaderMaterial({
+          uniforms: {
+            uThick: { value: 0.025 },
+            uOutlineColor: { value: new THREE.Color(0x1a1a1a) }
+          },
+          vertexShader: 'uniform float uThick;\nvoid main(){\nvec3 p=position+normal*uThick;\ngl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);\n}',
+          fragmentShader: 'uniform vec3 uOutlineColor;\nvoid main(){\ngl_FragColor=vec4(uOutlineColor,1.0);\n}',
+          side: THREE.BackSide
+        });
+
+        for (var li = 0; li < layerConfig.length; li++) {
+          var cfg = layerConfig[li];
+          var bucket = buckets[cfg.name];
+          if (bucket.positions.length === 0) continue;
+
+          var subGeo = new THREE.BufferGeometry();
+          subGeo.setAttribute('position', new THREE.Float32BufferAttribute(bucket.positions, 3));
+          subGeo.setAttribute('normal', new THREE.Float32BufferAttribute(bucket.normals, 3));
+
+          // 如果原始 mesh 有骨骼绑定，需要复制 skinning 属性
+          if (cmesh.isSkinnedMesh && geo.attributes.skinIndex && geo.attributes.skinWeight) {
+            // 从原始 geometry 提取对应顶点的 skin data
+            var skinIdx = geo.attributes.skinIndex;
+            var skinWt = geo.attributes.skinWeight;
+            var subSkinIdx = [], subSkinWt = [];
+
+            // 重新遍历三角面收集 skin 数据
+            for (var ti2 = 0; ti2 < triCount; ti2++) {
+              var i0b = getTriVert(ti2, 0), i1b = getTriVert(ti2, 1), i2b = getTriVert(ti2, 2);
+              var yCb = (pos.getY(i0b) + pos.getY(i1b) + pos.getY(i2b)) / 3;
+              var yRb = (yCb - yMin) / yRange;
+              var layerName = yRb > 0.55 ? 'top' : yRb > 0.25 ? 'mid' : 'bottom';
+              if (layerName !== cfg.name) continue;
+
+              var verts2 = [i0b, i1b, i2b];
+              for (var vv2 = 0; vv2 < 3; vv2++) {
+                var idx2 = verts2[vv2];
+                subSkinIdx.push(skinIdx.getX(idx2), skinIdx.getY(idx2), skinIdx.getZ(idx2), skinIdx.getW(idx2));
+                subSkinWt.push(skinWt.getX(idx2), skinWt.getY(idx2), skinWt.getZ(idx2), skinWt.getW(idx2));
+              }
+            }
+
+            subGeo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(subSkinIdx, 4));
+            subGeo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(subSkinWt, 4));
+
+            var skinMesh = new THREE.SkinnedMesh(subGeo, new THREE.MeshToonMaterial({ color: cfg.color, skinning: true }));
+            skinMesh.bind(cmesh.skeleton, cmesh.bindMatrix);
+            cmesh.parent.add(skinMesh);
+
+            // 描边也要绑骨骼
+            var olClone = charOutlineMat.clone();
+            olClone.skinning = true;
+            var olMesh = new THREE.SkinnedMesh(subGeo, olClone);
+            olMesh.bind(cmesh.skeleton, cmesh.bindMatrix);
+            cmesh.parent.add(olMesh);
+          } else {
+            cmesh.parent.add(new THREE.Mesh(subGeo, new THREE.MeshToonMaterial({ color: cfg.color })));
+            cmesh.parent.add(new THREE.Mesh(subGeo, charOutlineMat.clone()));
+          }
+        }
+
+        console.log('[角色材质] 三色渐变+描边完成, triCount:', triCount);
       }
 
-      // 计算整个模型的包围盒
-      var box = new THREE.Box3().setFromObject(charRoot);
-      var modelHeight = box.max.y - box.min.y;
-      // 游戏里角色大约 0.7 单位高
-      var targetHeight = 0.7;
-      var modelScale = targetHeight / modelHeight;
+      // 计算模型缩放 — 直接用固定缩放（骨骼变换导致包围盒不准）
+      // Armature 已有 scale 0.01，mesh 实际高度约 1.48
+      // 目标高度 0.7 单位，所以额外缩放 0.7/1.48 ≈ 0.47
+      var modelScale = 0.47;
 
-      // ★ 关键：用包围盒中心来居中模型（修复 XZ 偏移）
-      var center = new THREE.Vector3();
-      box.getCenter(center);
-
-      // 创建一个容器来做偏移修正
+      // 居中模型
       var wrapper = new THREE.Group();
       wrapper.add(charRoot);
-      // 先缩放
       wrapper.scale.set(modelScale, modelScale, modelScale);
-      // 把模型中心移到原点：X/Z 居中，Y 底部对齐
-      charRoot.position.x = -center.x;
-      charRoot.position.y = -box.min.y;  // 底部对齐地面
-      charRoot.position.z = -center.z;
 
       character.add(wrapper);
       glbModel = wrapper;
 
-      // 设置动画 — mixer 绑定到原始 charRoot 上
+      // 设置动画
       mixer = new THREE.AnimationMixer(charRoot);
 
-      // 找到 Mixamo 跑步动画（channels 较多的那个）
-      var runClip = null;
+      // 找到行走动画（取 channels 最多的）
+      var walkClip = null;
       for (var i = 0; i < gltf.animations.length; i++) {
         var clip = gltf.animations[i];
-        if (clip.name.indexOf('mixamo') !== -1 || clip.tracks.length > 10) {
-          runClip = clip;
-          break;
+        if (!walkClip || clip.tracks.length > walkClip.tracks.length) {
+          walkClip = clip;
         }
       }
 
-      if (runClip) {
-        // ★ 关键：移除 Hips 的 position/translation track（去除根位移）
+      if (walkClip) {
+        // 移除根骨骼的 position track（去除根位移）
         var filteredTracks = [];
-        for (var ti = 0; ti < runClip.tracks.length; ti++) {
-          var track = runClip.tracks[ti];
-          if (track.name.indexOf('Hips') !== -1 && track.name.indexOf('position') !== -1) {
+        for (var ti = 0; ti < walkClip.tracks.length; ti++) {
+          var track = walkClip.tracks[ti];
+          // 跳过根骨骼的 position（Hips 或其他根节点）
+          if (track.name.indexOf('position') !== -1 &&
+              (track.name.indexOf('Hips') !== -1 || track.name.indexOf('mixamorig') !== -1)) {
             continue;
           }
           filteredTracks.push(track);
         }
-        var cleanClip = new THREE.AnimationClip(runClip.name, runClip.duration, filteredTracks);
+        var cleanClip = new THREE.AnimationClip(walkClip.name, walkClip.duration, filteredTracks);
 
         runAction = mixer.clipAction(cleanClip);
         runAction.setLoop(THREE.LoopRepeat);
@@ -1918,7 +1991,11 @@
         // 清除旧状态
         el.classList.remove('disabled', 'purchased');
 
-        if (item.purchased) {
+        if (item.purchased && placementMode && placementKey === key) {
+          el.classList.add('purchased');
+          el.querySelector('.item-price').innerHTML = '';
+          el.querySelector('.item-info').innerHTML = '<div class="item-name">' + item.name + '</div><div class="item-status">🏗️ 放置中...</div>';
+        } else if (item.purchased) {
           el.classList.add('purchased');
           el.querySelector('.item-price').innerHTML = '';
           el.querySelector('.item-info').innerHTML = '<div class="item-name">' + item.name + '</div><div class="item-status">✅ 已放置</div>';
@@ -1928,31 +2005,260 @@
       }
     }
 
-    // 在角色前方放置建筑
-    function placeBuilding(key) {
+    // ════════════════════════════════════════════════════
+    // BUILDING PLACEMENT SYSTEM — 建筑放置系统
+    // ════════════════════════════════════════════════════
+    var placementMode = false;       // 是否处于放置模式
+    var placementKey = null;         // 当前放置的建筑 key
+    var placementGhost = null;       // 半透明预览模型
+    var placementValid = false;      // 当前位置是否可放置
+    var placementPos = new THREE.Vector3(); // 当前放置位置
+    var placedBuildings = [];        // 已放置的建筑列表 [{x,z,r}]
+    var placementRaycaster = new THREE.Raycaster();
+    var placementMouse = new THREE.Vector2();
+    var PLACEMENT_RADIUS = 1.3;      // 建筑碰撞半径
+
+    // 创建半透明预览材质（绿色/红色）
+    function setGhostColor(ghost, valid) {
+      var color = valid ? 0x00ff00 : 0xff0000;
+      ghost.traverse(function(c) {
+        if (c.isMesh) {
+          c.material = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.4,
+            side: THREE.DoubleSide,
+            depthWrite: false
+          });
+        }
+      });
+    }
+
+    // 检查放置位置是否合法
+    function checkPlacementValid(px, pz) {
+      // 1. 检查是否在地图范围内
+      if (Math.abs(px) > TERRAIN_BOUND - 1 || Math.abs(pz) > TERRAIN_BOUND - 1) return false;
+
+      // 2. 检查是否在河流中
+      if (isInRiver(px, pz)) return false;
+
+      // 3. 检查与所有碰撞体的距离（树、石头、原有建筑等）
+      for (var i = 0; i < colliders.length; i++) {
+        var col = colliders[i];
+        var dx = px - col.x;
+        var dz = pz - col.z;
+        var dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < PLACEMENT_RADIUS + col.r) return false;
+      }
+
+      // 4. 检查与已放置建筑的距离
+      for (var j = 0; j < placedBuildings.length; j++) {
+        var pb = placedBuildings[j];
+        var dx2 = px - pb.x;
+        var dz2 = pz - pb.z;
+        var dist2 = Math.sqrt(dx2 * dx2 + dz2 * dz2);
+        if (dist2 < PLACEMENT_RADIUS + pb.r) return false;
+      }
+
+      // 5. 检查地形坡度（太陡不能放）
+      var hCenter = terrainHeight(px, pz);
+      var hL = terrainHeight(px - 0.5, pz);
+      var hR = terrainHeight(px + 0.5, pz);
+      var hF = terrainHeight(px, pz - 0.5);
+      var hB = terrainHeight(px, pz + 0.5);
+      var maxSlope = Math.max(Math.abs(hCenter-hL), Math.abs(hCenter-hR), Math.abs(hCenter-hF), Math.abs(hCenter-hB));
+      if (maxSlope > 0.8) return false;
+
+      return true;
+    }
+
+    // 进入放置模式
+    function enterPlacementMode(key) {
       var item = shopItems[key];
       if (!item.model) {
         console.warn('模型还没加载完:', key);
-        return;
+        return false;
       }
 
-      // 用 wrapper 包裹，模型内部已经居中缩放好了
+      placementMode = true;
+      placementKey = key;
+
+      // 创建预览幽灵模型
+      placementGhost = new THREE.Group();
+      var ghostModel = item.model.clone();
+      placementGhost.add(ghostModel);
+      setGhostColor(placementGhost, false);
+
+      // 添加底部范围指示圈
+      var ringGeo = new THREE.RingGeometry(PLACEMENT_RADIUS - 0.05, PLACEMENT_RADIUS + 0.05, 32);
+      ringGeo.rotateX(-Math.PI / 2);
+      var ringMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+      var ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.name = 'placementRing';
+      placementGhost.add(ring);
+
+      // 初始位置在角色前方
+      var facing = charFacing || 0;
+      var initX = character.position.x + Math.sin(facing) * 4;
+      var initZ = character.position.z + Math.cos(facing) * 4;
+      placementGhost.position.set(initX, terrainHeight(initX, initZ), initZ);
+
+      scene.add(placementGhost);
+
+      // 显示提示
+      showPlacementHint(true);
+
+      console.log('进入放置模式:', item.name);
+      return true;
+    }
+
+    // 退出放置模式
+    function exitPlacementMode(cancel) {
+      if (!placementMode) return;
+
+      if (placementGhost) {
+        scene.remove(placementGhost);
+        placementGhost = null;
+      }
+
+      if (cancel && placementKey) {
+        // 取消放置，退还花朵
+        var item = shopItems[placementKey];
+        flowerCount += item.price;
+        item.purchased = false;
+        if (flowerCountEl) {
+          flowerCountEl.innerHTML = '🌸 已采花朵: <strong>' + flowerCount + '</strong>';
+        }
+        updateShopUI();
+        console.log('取消放置，退还花朵:', item.price);
+      }
+
+      placementMode = false;
+      placementKey = null;
+      showPlacementHint(false);
+    }
+
+    // 确认放置
+    function confirmPlacement() {
+      if (!placementMode || !placementValid || !placementKey) return;
+
+      var item = shopItems[placementKey];
+      var px = placementPos.x;
+      var pz = placementPos.z;
+      var py = terrainHeight(px, pz);
+
+      // 创建正式建筑
       var wrapper = new THREE.Group();
       var model = item.model.clone();
       wrapper.add(model);
-
-      // 放在角色前方 3 单位处
-      var facing = charFacing || 0;
-      var px = character.position.x + Math.sin(facing) * 3;
-      var pz = character.position.z + Math.cos(facing) * 3;
-      var py = terrainHeight(px, pz);
-
       wrapper.position.set(px, py, pz);
-      wrapper.rotation.y = facing;
+      wrapper.rotation.y = charFacing || 0;
       scene.add(wrapper);
 
-      console.log('放置建筑:', item.name, '在', px.toFixed(1), py.toFixed(1), pz.toFixed(1));
+      // 添加碰撞体
+      var newCollider = { x: px, z: pz, r: PLACEMENT_RADIUS };
+      colliders.push(newCollider);
+      placedBuildings.push(newCollider);
+
+      console.log('确认放置建筑:', item.name, '在', px.toFixed(1), py.toFixed(1), pz.toFixed(1));
+
+      // 清理放置模式
+      if (placementGhost) {
+        scene.remove(placementGhost);
+        placementGhost = null;
+      }
+      placementMode = false;
+      placementKey = null;
+      showPlacementHint(false);
+      updateShopUI();
     }
+
+    // 放置提示 UI
+    function showPlacementHint(show) {
+      var hint = document.getElementById('placementHint');
+      if (hint) {
+        hint.style.display = show ? 'block' : 'none';
+      }
+    }
+
+    // 更新放置预览位置（在 animate 中调用）
+    function updatePlacementPreview() {
+      if (!placementMode || !placementGhost) return;
+
+      // 用鼠标射线检测地形
+      placementRaycaster.setFromCamera(placementMouse, camera);
+
+      // 构造一个大平面来做射线检测（简化版：用 y=地面平均高度 的平面）
+      // 更精确的做法是用 terrain mesh，但这里用射线与多个采样点逼近
+      var ray = placementRaycaster.ray;
+      // 计算射线与 y=0 平面的交点（近似地面）
+      if (Math.abs(ray.direction.y) > 0.001) {
+        var avgGroundY = terrainHeight(character.position.x, character.position.z);
+        var t = (avgGroundY - ray.origin.y) / ray.direction.y;
+        if (t > 0) {
+          var hitX = ray.origin.x + ray.direction.x * t;
+          var hitZ = ray.origin.z + ray.direction.z * t;
+
+          // 限制放置范围在地图内
+          hitX = Math.max(-TERRAIN_BOUND + 1, Math.min(TERRAIN_BOUND - 1, hitX));
+          hitZ = Math.max(-TERRAIN_BOUND + 1, Math.min(TERRAIN_BOUND - 1, hitZ));
+
+          var hitY = terrainHeight(hitX, hitZ);
+          placementGhost.position.set(hitX, hitY, hitZ);
+          placementPos.set(hitX, hitY, hitZ);
+
+          // 检查合法性
+          placementValid = checkPlacementValid(hitX, hitZ);
+          setGhostColor(placementGhost, placementValid);
+
+          // 更新指示圈颜色
+          placementGhost.traverse(function(c) {
+            if (c.name === 'placementRing' && c.material) {
+              c.material.color.setHex(placementValid ? 0x00ff00 : 0xff0000);
+            }
+          });
+        }
+      }
+    }
+
+    // 鼠标移动 → 更新放置鼠标坐标
+    window.addEventListener('mousemove', function(e) {
+      if (placementMode) {
+        placementMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+        placementMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      }
+    });
+
+    // 鼠标点击 → 确认放置
+    window.addEventListener('click', function(e) {
+      if (!placementMode) return;
+      // 忽略对商店面板区域的点击
+      var target = e.target;
+      while (target) {
+        if (target.id === 'shopPanel' || target.classList && target.classList.contains('shop-item')) return;
+        target = target.parentElement;
+      }
+      if (placementValid) {
+        confirmPlacement();
+      }
+    });
+
+    // 右键或 Esc → 取消放置
+    window.addEventListener('contextmenu', function(e) {
+      if (placementMode) {
+        e.preventDefault();
+        exitPlacementMode(true);
+      }
+    });
+    window.addEventListener('keydown', function(e) {
+      if (placementMode && e.key === 'Escape') {
+        exitPlacementMode(true);
+      }
+      // R 键旋转预览建筑
+      if (placementMode && e.key.toLowerCase() === 'r' && placementGhost) {
+        placementGhost.rotation.y += Math.PI / 4;
+      }
+    });
 
     // 全局购买函数（给 onclick 用）
     window.buyItem = function(key) {
@@ -1960,6 +2266,7 @@
       if (!item) return;
       if (item.purchased) return;
       if (flowerCount < item.price) return;
+      if (placementMode) return; // 已在放置模式中，不允许重复购买
 
       // 扣花
       flowerCount -= item.price;
@@ -1970,13 +2277,15 @@
         flowerCountEl.innerHTML = '🌸 已采花朵: <strong>' + flowerCount + '</strong>';
       }
 
-      // 放置建筑
-      placeBuilding(key);
+      // 进入放置模式（而不是直接放置）
+      if (!enterPlacementMode(key)) {
+        // 如果进入放置模式失败（模型未加载），退还
+        flowerCount += item.price;
+        item.purchased = false;
+      }
 
-      // 更新商店 UI
       updateShopUI();
-
-      console.log('兑换成功:', item.name, '剩余花:', flowerCount);
+      console.log('兑换成功，进入放置模式:', item.name, '剩余花:', flowerCount);
     };
 
     // 初始化商店 UI
@@ -2338,6 +2647,11 @@
       // ── 塔楼旗帜飘动 ──
       if (tower1.flag) tower1.flag.rotation.y = Math.sin(t * 2.0) * 0.3;
       if (tower2.flag) tower2.flag.rotation.y = Math.sin(t * 2.0 + 1) * 0.3;
+
+      // ── 建筑放置预览更新 ──
+      if (placementMode) {
+        updatePlacementPreview();
+      }
 
       // ── 小地图绘制 ──
       if (minimapCtx) {
